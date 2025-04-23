@@ -78,6 +78,8 @@ import * as utils from "../utils.ts";
 import { KnownMembership, type Membership } from "../@types/membership.ts";
 import { type Capabilities, type IRoomVersionsCapability, RoomVersionStability } from "../serverCapabilities.ts";
 import { type MSC4186Hero } from "../sliding-sync.ts";
+import {isStreamEvent, Stream, StreamEvent} from "./stream.ts";
+import {M_STREAM_START} from "../@types/streams.ts";
 
 // These constants are used as sane defaults when the homeserver doesn't support
 // the m.room_versions capability. In practice, KNOWN_SAFE_ROOM_VERSION should be
@@ -177,7 +179,8 @@ export type RoomEmittedEvents =
     | BeaconEvent.Update
     | BeaconEvent.Destroy
     | BeaconEvent.LivenessChange
-    | PollEvent.New;
+    | PollEvent.New
+    | StreamEvent.New;
 
 export type RoomEventHandlerMap = {
     /**
@@ -318,6 +321,8 @@ export type RoomEventHandlerMap = {
      * @param poll - the new poll
      */
     [PollEvent.New]: (poll: Poll) => void;
+
+    [StreamEvent.New]: (stream: Stream) => void;
 } & Pick<ThreadHandlerMap, ThreadEvent.Update | ThreadEvent.NewReply | ThreadEvent.Delete> &
     EventTimelineSetHandlerMap &
     Pick<MatrixEventHandlerMap, MatrixEventEvent.BeforeRedaction> &
@@ -348,6 +353,7 @@ export class Room extends ReadReceipt<RoomEmittedEvents, RoomEventHandlerMap> {
     private unthreadedReceipts = new Map<string, Receipt>();
     private readonly timelineSets: EventTimelineSet[];
     public readonly polls: Map<string, Poll> = new Map<string, Poll>();
+    public readonly streams: Map<string, Stream> = new Map<string, Stream>();
 
     /**
      * Empty array if the timeline sets have not been initialised. After initialisation:
@@ -2283,6 +2289,44 @@ export class Room extends ReadReceipt<RoomEmittedEvents, RoomEventHandlerMap> {
         if (relationEventId && this.polls.has(relationEventId)) {
             const poll = this.polls.get(relationEventId);
             poll?.onNewRelation(event);
+        }
+    }
+
+    public async processStreamEvents(events: MatrixEvent[]): Promise<void> {
+        for (const event of events) {
+            try {
+                // Continue if the event is a clear text, non-poll event.
+                if (!event.isEncrypted() && !isStreamEvent(event)) continue;
+
+                await this.client.decryptEventIfNeeded(event);
+                this.processStreamEvent(event);
+            } catch (err) {
+                logger.warn("Error processing stream event", event.getId(), err);
+            }
+        }
+    }
+
+    private async processStreamEvent(event: MatrixEvent): Promise<void> {
+        if (event.isDecryptionFailure()) {
+            event.once(MatrixEventEvent.Decrypted, (maybeDecryptedEvent: MatrixEvent) => {
+                this.processStreamEvent(maybeDecryptedEvent);
+            });
+            return;
+        }
+
+        if (M_STREAM_START.matches(event.getType())) {
+            try {
+                const stream = new Stream(event, this);
+                this.streams.set(event.getId()!, stream);
+                this.emit(StreamEvent.New, stream);
+
+                // remove the poll when redacted
+                event.once(MatrixEventEvent.BeforeRedaction, (redactedEvent: MatrixEvent) => {
+                    this.streams.delete(redactedEvent.getId()!);
+                });
+            } catch {}
+            // poll creation can fail for malformed poll start events
+            return;
         }
     }
 
