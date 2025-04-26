@@ -13,7 +13,8 @@ import { ExtensibleEvent } from "./ExtensibleEvent.ts";
  */
 export class StreamStartEvent extends ExtensibleEvent<StreamStartEventContent> {
     public readonly description: MessageEvent;
-    public readonly stream_url: MessageEvent;
+    public readonly stream_app: MessageEvent;
+    public readonly stream_id: MessageEvent;
     public readonly third_party: boolean;
 
 
@@ -32,8 +33,12 @@ export class StreamStartEvent extends ExtensibleEvent<StreamStartEventContent> {
             throw new InvalidEventError("A description is required");
         }
 
-        if (!stream?.stream_url) {
-            throw new InvalidEventError("A stream_url is required");
+        if (!stream?.stream_app) {
+            throw new InvalidEventError("A stream_app is required");
+        }
+
+        if (!stream?.stream_id) {
+            throw new InvalidEventError("A stream_id is required");
         }
 
         if (stream?.third_party == null) {
@@ -41,7 +46,8 @@ export class StreamStartEvent extends ExtensibleEvent<StreamStartEventContent> {
         }
 
         this.description = new MessageEvent({ type: "org.matrix.sdk.stream.description", content: stream.description });
-        this.stream_url = new MessageEvent({ type: "org.matrix.sdk.stream.stream_url", content: stream.stream_url });
+        this.stream_app = new MessageEvent({ type: "org.matrix.sdk.stream.stream_app", content: stream.stream_app });
+        this.stream_id = new MessageEvent({ type: "org.matrix.sdk.stream.stream_id", content: stream.stream_id });
         this.third_party = stream.third_party;
     }
 
@@ -55,17 +61,19 @@ export class StreamStartEvent extends ExtensibleEvent<StreamStartEventContent> {
             content: {
                 [M_STREAM_START.name]: {
                     description: this.description.serialize().content,
-                    stream_url: this.stream_url.serialize().content,
+                    stream_app: this.stream_app.serialize().content,
+                    stream_id: this.stream_id.serialize().content,
                     third_party: this.third_party
                 },
-                [M_TEXT.name]: `${this.description.text} ${this.stream_url.text} third_party: ${this.third_party}`,
+                [M_TEXT.name]: `${this.description.text} app: ${this.stream_app.text} id: ${this.stream_id.text} third_party: ${this.third_party}`,
             },
         };
     }
 
     public static from(
         description: string,
-        stream_url: string,
+        stream_app: string,
+        stream_id: string,
         third_party: boolean
     ): StreamStartEvent {
         return new StreamStartEvent({
@@ -74,7 +82,8 @@ export class StreamStartEvent extends ExtensibleEvent<StreamStartEventContent> {
                 [M_TEXT.name]: description, // unused by parsing
                 [M_STREAM_START.name]: {
                     description: { [M_TEXT.name]: description },
-                    stream_url: { [M_TEXT.name]: stream_url },
+                    stream_app: { [M_TEXT.name]: stream_app },
+                    stream_id: { [M_TEXT.name]: stream_id },
                     third_party: third_party
                 },
             },

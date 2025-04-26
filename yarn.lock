@@ -5171,9 +5171,9 @@ markdown-it@^14.1.0:
     punycode.js "^2.3.1"
     uc.micro "^2.1.0"
 
-"matrix-events-sdk@git+https://github.com/egorovandreyrm/matrix-events-sdk.git#264b553e1eba6ef4c267ad7285a96a642b2c36ae":
+"matrix-events-sdk@git+https://github.com/egorovandreyrm/matrix-events-sdk.git#1fd57ac3921caf9dddcb9a1da771e97384f5efe7":
   version "0.0.1-beta.7"
-  resolved "git+https://github.com/egorovandreyrm/matrix-events-sdk.git#264b553e1eba6ef4c267ad7285a96a642b2c36ae"
+  resolved "git+https://github.com/egorovandreyrm/matrix-events-sdk.git#1fd57ac3921caf9dddcb9a1da771e97384f5efe7"
 
 matrix-mock-request@^2.5.0:
   version "2.6.0"

@@ -17,7 +17,8 @@ export const M_STREAM_START = new UnstableValue("m.stream.start", "org.matrix.ms
  */
 export type StreamStartSubtype = {
     description: ExtensibleAnyMessageEventContent;
-    stream_url: ExtensibleAnyMessageEventContent;
+    stream_app: ExtensibleAnyMessageEventContent;
+    stream_id: ExtensibleAnyMessageEventContent;
     third_party: boolean;
 };
 
