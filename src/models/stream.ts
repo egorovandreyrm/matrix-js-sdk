@@ -3,6 +3,7 @@ import {TypedEventEmitter} from "./typed-event-emitter.ts";
 import type {Room} from "./room.ts";
 import {StreamStartEvent} from "../extensible_events_v1/StreamStartEvent.ts";
 import {M_STREAM_END, M_STREAM_START} from "../@types/streams.ts";
+import { type MatrixClient } from "../client.ts";
 
 export enum StreamEvent {
     New = "Stream.new",
@@ -22,6 +23,9 @@ export type StreamEventHandlerMap = {
 export class Stream extends TypedEventEmitter<Exclude<StreamEvent, StreamEvent.New>, StreamEventHandlerMap> {
     public readonly roomId: string;
     public readonly streamEvent: StreamStartEvent;
+    private _isFetchingRelations = false;
+    private _isLoadedRelations = false;
+
     private endEvent: MatrixEvent | undefined;
     /**
      * Keep track of undecryptable relations
@@ -31,6 +35,7 @@ export class Stream extends TypedEventEmitter<Exclude<StreamEvent, StreamEvent.N
 
     public constructor(
         public readonly rootEvent: MatrixEvent,
+        private matrixClient: MatrixClient,
         private room: Room,
     ) {
         super();
@@ -53,6 +58,14 @@ export class Stream extends TypedEventEmitter<Exclude<StreamEvent, StreamEvent.N
         return !!this.endEvent;
     }
 
+    public get isFetchingRelations(): boolean {
+        return this._isFetchingRelations;
+    }
+
+    public get isLoadedRelations(): boolean {
+        return this._isLoadedRelations;
+    }
+
     public get undecryptableRelationsCount(): number {
         return this.undecryptableRelationEventIds.size;
     }
@@ -69,6 +82,48 @@ export class Stream extends TypedEventEmitter<Exclude<StreamEvent, StreamEvent.N
         }
 
         this.countUndecryptableEvents([event]);
+    }
+
+    async fetchRelations(): Promise<void> {
+        if (this.isFetchingRelations) {
+            return
+        }
+
+        if (this.isEnded) {
+            return
+        }
+
+        this._isFetchingRelations = true;
+
+        // we want:
+        // - stable and unstable M_POLL_RESPONSE
+        // - stable and unstable M_POLL_END
+        // so make one api call and filter by event type client side
+        const allRelations = await this.matrixClient.relations(
+            this.roomId,
+            this.rootEvent.getId()!,
+            "m.reference",
+            undefined,
+            undefined
+        );
+
+        await Promise.all(allRelations.events.map((event) => this.matrixClient.decryptEventIfNeeded(event)));
+
+        const streamEndEvent = allRelations.events.find(
+            (event) => M_STREAM_END.matches(event.getType())
+        );
+
+        if (this.validateEndEvent(streamEndEvent)) {
+            this.endEvent = streamEndEvent;
+            this.emit(StreamEvent.End);
+        }
+
+        this.countUndecryptableEvents(allRelations.events);
+
+        this._isFetchingRelations = false;
+        this._isLoadedRelations = true;
+
+        console.log("streamStartEvents: fetchRelations finished")
     }
 
     private countUndecryptableEvents = (events: MatrixEvent[]): void => {

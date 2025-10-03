@@ -2316,7 +2316,7 @@ export class Room extends ReadReceipt<RoomEmittedEvents, RoomEventHandlerMap> {
 
         if (M_STREAM_START.matches(event.getType())) {
             try {
-                const stream = new Stream(event, this);
+                const stream = new Stream(event, this.client, this);
                 this.streams.set(event.getId()!, stream);
                 this.emit(StreamEvent.New, stream);
 
