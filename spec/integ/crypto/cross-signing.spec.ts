@@ -17,9 +17,10 @@ limitations under the License.
 import fetchMock from "fetch-mock-jest";
 import "fake-indexeddb/auto";
 import { IDBFactory } from "fake-indexeddb";
+import debug from "debug";
 
 import { syncPromise } from "../../test-utils/test-utils";
-import { type AuthDict, createClient, type MatrixClient } from "../../../src";
+import { type AuthDict, createClient, DebugLogger, type MatrixClient } from "../../../src";
 import { mockInitialApiRequests, mockSetupCrossSigningRequests } from "../../test-utils/mockEndpoints";
 import encryptAESSecretStorageItem from "../../../src/utils/encryptAESSecretStorageItem.ts";
 import { type CryptoCallbacks, CrossSigningKey } from "../../../src/crypto-api";
@@ -91,6 +92,7 @@ describe("cross-signing", () => {
                 accessToken: "akjgkrgjs",
                 deviceId: TEST_DEVICE_ID,
                 cryptoCallbacks: createCryptoCallbacks(),
+                logger: new DebugLogger(debug(`matrix-js-sdk:cross-signing`)),
             });
 
             syncResponder = new SyncResponder(homeserverUrl);
@@ -135,9 +137,9 @@ describe("cross-signing", () => {
             const authDict = { type: "test" };
             await bootstrapCrossSigning(authDict);
 
-            // check the cross-signing keys upload
-            expect(fetchMock.called("upload-keys")).toBeTruthy();
-            const [, keysOpts] = fetchMock.lastCall("upload-keys")!;
+            // check that the cross-signing keys have been uploaded
+            expect(fetchMock.called("upload-cross-signing-keys")).toBeTruthy();
+            const [, keysOpts] = fetchMock.lastCall("upload-cross-signing-keys")!;
             const keysBody = JSON.parse(keysOpts!.body as string);
             expect(keysBody.auth).toEqual(authDict); // check uia dict was passed
             // there should be a key of each type
@@ -222,9 +224,6 @@ describe("cross-signing", () => {
             });
             await aliceClient.startClient();
             await syncPromise(aliceClient);
-
-            // we expect a request to upload signatures for our device ...
-            fetchMock.post({ url: "path:/_matrix/client/v3/keys/signatures/upload", name: "upload-sigs" }, {});
 
             // we expect the UserTrustStatusChanged event to be fired after the cross signing keys import
             const userTrustStatusChangedPromise = new Promise<string>((resolve) =>
@@ -418,15 +417,18 @@ describe("cross-signing", () => {
             return new Promise<any>((resolve) => {
                 fetchMock.post(
                     {
-                        url: new RegExp("/_matrix/client/v3/keys/device_signing/upload"),
-                        name: "upload-keys",
+                        url: new URL(
+                            "/_matrix/client/v3/keys/device_signing/upload",
+                            aliceClient.getHomeserverUrl(),
+                        ).toString(),
+                        name: "upload-cross-signing-keys",
                     },
                     (url, options) => {
                         const content = JSON.parse(options.body as string);
                         resolve(content);
                         return {};
                     },
-                    // Override the routes define in `mockSetupCrossSigningRequests`
+                    // Override the route defined in E2EKeyReceiver
                     { overwriteRoutes: true },
                 );
             });

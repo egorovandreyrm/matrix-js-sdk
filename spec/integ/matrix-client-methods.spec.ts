@@ -267,6 +267,59 @@ describe("MatrixClient", function () {
         });
     });
 
+    describe("invite", function () {
+        it("should send request to /invite", async () => {
+            const roomId = "!roomId:server";
+            const userId = "@user:server";
+
+            httpBackend
+                .when("POST", `/rooms/${encodeURIComponent(roomId)}/invite`)
+                .check((request) => {
+                    expect(request.data).toEqual({ user_id: userId });
+                })
+                .respond(200, {});
+
+            const prom = client.invite(roomId, userId);
+            await httpBackend.flushAllExpected();
+            await prom;
+            httpBackend.verifyNoOutstandingExpectation();
+        });
+
+        it("accepts a stringy reason argument", async () => {
+            const roomId = "!roomId:server";
+            const userId = "@user:server";
+
+            httpBackend
+                .when("POST", `/rooms/${encodeURIComponent(roomId)}/invite`)
+                .check((request) => {
+                    expect(request.data).toEqual({ user_id: userId, reason: "testreason" });
+                })
+                .respond(200, {});
+
+            const prom = client.invite(roomId, userId, "testreason");
+            await httpBackend.flushAllExpected();
+            await prom;
+            httpBackend.verifyNoOutstandingExpectation();
+        });
+
+        it("accepts an options object with a reason", async () => {
+            const roomId = "!roomId:server";
+            const userId = "@user:server";
+
+            httpBackend
+                .when("POST", `/rooms/${encodeURIComponent(roomId)}/invite`)
+                .check((request) => {
+                    expect(request.data).toEqual({ user_id: userId, reason: "testreason" });
+                })
+                .respond(200, {});
+
+            const prom = client.invite(roomId, userId, { reason: "testreason" });
+            await httpBackend.flushAllExpected();
+            await prom;
+            httpBackend.verifyNoOutstandingExpectation();
+        });
+    });
+
     describe("knockRoom", function () {
         const roomId = "!some-room-id:example.org";
         const reason = "some reason";
@@ -1794,6 +1847,27 @@ describe("MatrixClient", function () {
 
         it("should return the localpart of the userId", () => {
             expect(client.getUserIdLocalpart()).toBe("alice");
+        });
+    });
+
+    describe("setRoomMutePushRule", () => {
+        it("should set room push rule to muted", async () => {
+            const roomId = "!roomId:server";
+            const client = new MatrixClient({
+                baseUrl: "http://localhost",
+                fetchFn: httpBackend.fetchFn as typeof globalThis.fetch,
+            });
+            client.pushRules = {
+                global: {
+                    room: [{ rule_id: roomId, actions: [], default: false, enabled: false }],
+                },
+            };
+
+            const path = `/pushrules/global/room/${encodeURIComponent(roomId)}`;
+            httpBackend.when("DELETE", path).respond(200, {});
+            httpBackend.when("PUT", path).respond(200, {});
+            client.setRoomMutePushRule("global", roomId, true);
+            await httpBackend.flush("");
         });
     });
 });

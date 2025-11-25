@@ -15,7 +15,7 @@ jobs:
         name: Preview Changelog
         runs-on: ubuntu-24.04
         steps:
-            - uses: mheap/github-action-required-labels@388fd6af37b34cdfe5a23b37060e763217e58b03 # v5
+            - uses: mheap/github-action-required-labels@8afbe8ae6ab7647d0c9f0cfa7c2f939650d22509 # v5
               if: github.event_name != 'merge_group'
               with:
                   labels: |
@@ -35,7 +35,7 @@ jobs:
             pull-requests: read
         steps:
             - name: Add notice
-              uses: actions/github-script@v7
+              uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8
               if: contains(github.event.pull_request.labels.*.name, 'X-Blocked')
               with:
                   script: |
@@ -49,7 +49,7 @@ jobs:
             pull-requests: write
         steps:
             - name: Check membership
-              if: github.event.pull_request.user.login != 'renovate[bot]'
+              if: github.event.pull_request.user.login != 'renovate[bot]' && github.event.pull_request.user.login != 'dependabot[bot]'
               uses: tspascoal/get-user-teams-membership@57e9f42acd78f4d0f496b3be4368fc5f62696662 # v3
               id: teams
               with:
@@ -60,7 +60,7 @@ jobs:
 
             - name: Add label
               if: steps.teams.outputs.isTeamMember == 'false'
-              uses: actions/github-script@v7
+              uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8
               with:
                   script: |
                       github.rest.issues.addLabels({
@@ -79,7 +79,7 @@ jobs:
             github.event.pull_request.head.repo.full_name != github.repository
         steps:
             - name: Close pull request
-              uses: actions/github-script@v7
+              uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8
               with:
                   script: |
                       github.rest.issues.createComment({

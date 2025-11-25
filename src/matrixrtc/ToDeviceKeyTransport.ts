@@ -14,15 +14,24 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
+import { type WidgetApiResponseError } from "matrix-widget-api";
+
 import { TypedEventEmitter } from "../models/typed-event-emitter.ts";
 import { type IKeyTransport, KeyTransportEvents, type KeyTransportEventsHandlerMap } from "./IKeyTransport.ts";
 import { type Logger, logger as rootLogger } from "../logger.ts";
-import type { CallMembership } from "./CallMembership.ts";
-import type { EncryptionKeysToDeviceEventContent, Statistics } from "./types.ts";
+import { type EncryptionKeysToDeviceEventContent, type ParticipantDeviceInfo, type Statistics } from "./types.ts";
 import { ClientEvent, type MatrixClient } from "../client.ts";
 import type { MatrixEvent } from "../models/event.ts";
 import { EventType } from "../@types/event.ts";
 
+export class NotSupportedError extends Error {
+    public constructor(message?: string) {
+        super(message);
+    }
+    public get name(): string {
+        return "NotSupportedError";
+    }
+}
 /**
  * ToDeviceKeyTransport is used to send MatrixRTC keys to other devices using the
  * to-device CS-API.
@@ -31,7 +40,11 @@ export class ToDeviceKeyTransport
     extends TypedEventEmitter<KeyTransportEvents, KeyTransportEventsHandlerMap>
     implements IKeyTransport
 {
-    private readonly logger: Logger;
+    private logger: Logger = rootLogger;
+
+    public setParentLogger(parentLogger: Logger): void {
+        this.logger = parentLogger.getChild(`[ToDeviceKeyTransport]`);
+    }
 
     public constructor(
         private userId: string,
@@ -42,7 +55,7 @@ export class ToDeviceKeyTransport
         parentLogger?: Logger,
     ) {
         super();
-        this.logger = (parentLogger ?? rootLogger).getChild(`[ToDeviceKeyTransport]`);
+        this.setParentLogger(parentLogger ?? rootLogger);
     }
 
     public start(): void {
@@ -53,7 +66,7 @@ export class ToDeviceKeyTransport
         this.client.off(ClientEvent.ToDeviceEvent, this.onToDeviceEvent);
     }
 
-    public async sendKey(keyBase64Encoded: string, index: number, members: CallMembership[]): Promise<void> {
+    public async sendKey(keyBase64Encoded: string, index: number, members: ParticipantDeviceInfo[]): Promise<void> {
         const content: EncryptionKeysToDeviceEventContent = {
             keys: {
                 index: index,
@@ -68,27 +81,35 @@ export class ToDeviceKeyTransport
                 application: "m.call",
                 scope: "m.room",
             },
+            sent_ts: Date.now(),
         };
 
         const targets = members
-            .filter((member) => {
-                // filter malformed call members
-                if (member.sender == undefined || member.deviceId == undefined) {
-                    this.logger.warn(`Malformed call member: ${member.sender}|${member.deviceId}`);
-                    return false;
-                }
-                // Filter out me
-                return !(member.sender == this.userId && member.deviceId == this.deviceId);
-            })
             .map((member) => {
                 return {
-                    userId: member.sender!,
+                    userId: member.userId!,
                     deviceId: member.deviceId!,
                 };
-            });
+            })
+            // filter out me
+            .filter((member) => !(member.userId == this.userId && member.deviceId == this.deviceId));
 
         if (targets.length > 0) {
-            await this.client.encryptAndSendToDevice(EventType.CallEncryptionKeysPrefix, targets, content);
+            await this.client
+                .encryptAndSendToDevice(EventType.CallEncryptionKeysPrefix, targets, content)
+                .catch((error: WidgetApiResponseError) => {
+                    const msg: string = error.message;
+                    // This is not ideal. We would want to have a custom error type for unsupported actions.
+                    // This is not part of the widget API spec. Since as of now there are only two implementations:
+                    // Rust SDK + JS-SDK, and the JS-SDK does support to-device sending, we can assume that
+                    // this is a widget driver issue error message.
+                    if (
+                        (msg.includes("unknown variant") && msg.includes("send_to_device")) ||
+                        msg.includes("not supported")
+                    ) {
+                        throw new NotSupportedError("The widget driver does not support to-device encryption");
+                    }
+                });
             this.statistics.counters.roomEventEncryptionKeysSent += 1;
         } else {
             this.logger.warn("No targets found for sending key");

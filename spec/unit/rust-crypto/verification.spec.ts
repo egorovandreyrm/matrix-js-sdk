@@ -32,6 +32,7 @@ import {
 import { type OutgoingRequestProcessor } from "../../../src/rust-crypto/OutgoingRequestProcessor";
 import { type IDeviceKeys } from "../../../src/@types/crypto";
 import { EventType, MatrixEvent, MsgType } from "../../../src";
+import { logger } from "../../../src/logger.ts";
 
 describe("VerificationRequest", () => {
     describe("pending", () => {
@@ -147,6 +148,7 @@ describe("VerificationRequest", () => {
                 methods,
             );
             const aliceVerificationRequest = new RustVerificationRequest(
+                logger,
                 aliceOlmMachine,
                 innerVerificationRequest,
                 aliceRequestLoop as unknown as OutgoingRequestProcessor,
@@ -154,6 +156,8 @@ describe("VerificationRequest", () => {
             );
 
             const verificationRequestContent = JSON.parse(await bobUserIdentity.verificationRequestContent(methods));
+            todoFixupVerificationRequestContent(verificationRequestContent);
+
             await bobOlmMachine.receiveVerificationEvent(
                 JSON.stringify({
                     type: "m.room.message",
@@ -174,6 +178,7 @@ describe("VerificationRequest", () => {
                 "$m.key.verification.request",
             )!;
             const bobVerificationRequest = new RustVerificationRequest(
+                logger,
                 bobOlmMachine,
                 bobInnerVerificationRequest,
                 bobRequestLoop as unknown as OutgoingRequestProcessor,
@@ -278,6 +283,7 @@ describe("VerificationRequest", () => {
                 methods,
             );
             const aliceVerificationRequest = new RustVerificationRequest(
+                logger,
                 aliceOlmMachine,
                 innerVerificationRequest,
                 aliceRequestLoop as unknown as OutgoingRequestProcessor,
@@ -285,6 +291,8 @@ describe("VerificationRequest", () => {
             );
 
             const verificationRequestContent = JSON.parse(await bobUserIdentity.verificationRequestContent(methods));
+            todoFixupVerificationRequestContent(verificationRequestContent);
+
             await bobOlmMachine.receiveVerificationEvent(
                 JSON.stringify({
                     type: "m.room.message",
@@ -305,6 +313,7 @@ describe("VerificationRequest", () => {
                 "$m.key.verification.request",
             )!;
             const bobVerificationRequest = new RustVerificationRequest(
+                logger,
                 bobOlmMachine,
                 bobInnerVerificationRequest,
                 bobRequestLoop as unknown as OutgoingRequestProcessor,
@@ -392,6 +401,7 @@ describe("VerificationRequest", () => {
                 methods,
             );
             const aliceVerificationRequest = new RustVerificationRequest(
+                logger,
                 aliceOlmMachine,
                 innerVerificationRequest,
                 aliceRequestLoop as unknown as OutgoingRequestProcessor,
@@ -399,6 +409,8 @@ describe("VerificationRequest", () => {
             );
 
             const verificationRequestContent = JSON.parse(await bobUserIdentity.verificationRequestContent(methods));
+            todoFixupVerificationRequestContent(verificationRequestContent);
+
             await bobOlmMachine.receiveVerificationEvent(
                 JSON.stringify({
                     type: "m.room.message",
@@ -419,6 +431,7 @@ describe("VerificationRequest", () => {
                 "$m.key.verification.request",
             )!;
             const bobVerificationRequest = new RustVerificationRequest(
+                logger,
                 bobOlmMachine,
                 bobInnerVerificationRequest,
                 bobRequestLoop as unknown as OutgoingRequestProcessor,
@@ -452,6 +465,15 @@ describe("VerificationRequest", () => {
         }
     });
 });
+
+/**
+ * Needed until https://github.com/matrix-org/matrix-rust-sdk/issues/5643 is fixed.
+ *
+ * Modify the content of the supplied content to include `msgtype: m.key.verification.request`.
+ */
+function todoFixupVerificationRequestContent(content: any) {
+    content.msgtype = "m.key.verification.request";
+}
 
 describe("isVerificationEvent", () => {
     it.each([
@@ -496,7 +518,7 @@ function makeTestRequest(
     inner ??= makeMockedInner();
     olmMachine ??= {} as RustSdkCryptoJs.OlmMachine;
     outgoingRequestProcessor ??= {} as OutgoingRequestProcessor;
-    return new RustVerificationRequest(olmMachine, inner, outgoingRequestProcessor, []);
+    return new RustVerificationRequest(logger, olmMachine, inner, outgoingRequestProcessor, []);
 }
 
 /** Mock up a rust-side VerificationRequest */

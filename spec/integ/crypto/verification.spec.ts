@@ -17,6 +17,7 @@ limitations under the License.
 import "fake-indexeddb/auto";
 
 import anotherjson from "another-json";
+import debug from "debug";
 import fetchMock from "fetch-mock-jest";
 import { IDBFactory } from "fake-indexeddb";
 import { createHash } from "crypto";
@@ -25,6 +26,7 @@ import Olm from "@matrix-org/olm";
 import type FetchMock from "fetch-mock";
 import {
     createClient,
+    DebugLogger,
     DeviceVerification,
     type IContent,
     type ICreateClientOpts,
@@ -44,8 +46,8 @@ import {
     type Verifier,
     VerifierEvent,
 } from "../../../src/crypto-api/verification";
-import { defer, escapeRegExp } from "../../../src/utils";
-import { awaitDecryption, emitPromise, getSyncResponse, syncPromise } from "../../test-utils/test-utils";
+import { escapeRegExp, sleep } from "../../../src/utils";
+import { awaitDecryption, emitPromise, getSyncResponse, syncPromise, waitFor } from "../../test-utils/test-utils";
 import { SyncResponder } from "../../test-utils/SyncResponder";
 import {
     BACKUP_DECRYPTION_KEY_BASE64,
@@ -77,14 +79,9 @@ import {
 import { type KeyBackupInfo, CryptoEvent } from "../../../src/crypto-api";
 import { encodeBase64 } from "../../../src/base64";
 
-// The verification flows use javascript timers to set timeouts. We tell jest to use mock timer implementations
-// to ensure that we don't end up with dangling timeouts.
-// But the wasm bindings of matrix-sdk-crypto rely on a working `queueMicrotask`.
-jest.useFakeTimers({ doNotFake: ["queueMicrotask"] });
-
 beforeAll(async () => {
     // we use the libolm primitives in the test, so init the Olm library
-    await globalThis.Olm.init();
+    await Olm.init();
 });
 
 // load the rust library. This can take a few seconds on a slow GH worker.
@@ -93,6 +90,13 @@ beforeAll(async () => {
     const RustSdkCryptoJs = await require("@matrix-org/matrix-sdk-crypto-wasm");
     await RustSdkCryptoJs.initAsync();
 }, 10000);
+
+beforeEach(() => {
+    // The verification flows use javascript timers to set timeouts. We tell jest to use mock timer implementations
+    // to ensure that we don't end up with dangling timeouts.
+    // But the wasm bindings of matrix-sdk-crypto rely on a working `queueMicrotask`.
+    jest.useFakeTimers({ doNotFake: ["queueMicrotask"] });
+});
 
 afterEach(() => {
     // reset fake-indexeddb after each test, to make sure we don't leak connections
@@ -110,7 +114,6 @@ const TEST_HOMESERVER_URL = "https://alice-server.com";
  * These tests work by intercepting HTTP requests via fetch-mock rather than mocking out bits of the client, so as
  * to provide the most effective integration tests possible.
  */
-// we test with both crypto stacks...
 describe("verification", () => {
     /** the client under test */
     let aliceClient: MatrixClient;
@@ -254,7 +257,7 @@ describe("verification", () => {
 
             // The dummy device makes up a curve25519 keypair and sends the public bit back in an `m.key.verification.key'
             // We use the Curve25519, HMAC and HKDF implementations in libolm, for now
-            const olmSAS = new globalThis.Olm.SAS();
+            const olmSAS = new Olm.SAS();
             returnToDeviceMessageFromSync(buildSasKeyMessage(transactionId, olmSAS.get_pubkey()));
 
             // alice responds with a 'key' ...
@@ -348,7 +351,7 @@ describe("verification", () => {
 
             // The dummy device makes up a curve25519 keypair and uses the hash in an 'm.key.verification.accept'
             // We use the Curve25519, HMAC and HKDF implementations in libolm, for now
-            const olmSAS = new globalThis.Olm.SAS();
+            const olmSAS = new Olm.SAS();
             const commitmentStr = olmSAS.get_pubkey() + anotherjson.stringify(toDeviceMessage);
 
             sendToDevicePromise = expectSendToDeviceMessage("m.key.verification.key");
@@ -734,6 +737,35 @@ describe("verification", () => {
             expect(request.cancellingUserId).toEqual("@alice:localhost");
         });
 
+        it("does not include cancelled requests in the list of requests", async () => {
+            // Given Alice started a verification request
+            const [, request] = await Promise.all([
+                expectSendToDeviceMessage("m.key.verification.request"),
+                aliceClient.getCrypto()!.requestDeviceVerification(TEST_USER_ID, TEST_DEVICE_ID),
+            ]);
+            const transactionId = request.transactionId!;
+
+            returnToDeviceMessageFromSync(buildReadyMessage(transactionId, ["m.sas.v1"]));
+            await waitForVerificationRequestChanged(request);
+
+            // Sanity: the request is listed
+            const requestsBeforeCancel = aliceClient
+                .getCrypto()!
+                .getVerificationRequestsToDeviceInProgress(TEST_USER_ID);
+
+            expect(requestsBeforeCancel).toHaveLength(1);
+
+            // When Alice cancels it
+            await Promise.all([expectSendToDeviceMessage("m.key.verification.cancel"), request.cancel()]);
+
+            // Then it is no longer listed as in progress
+            const requestsAfterCancel = aliceClient
+                .getCrypto()!
+                .getVerificationRequestsToDeviceInProgress(TEST_USER_ID);
+
+            expect(requestsAfterCancel).toHaveLength(0);
+        });
+
         it("can cancel during the SAS phase", async () => {
             // have alice initiate a verification. She should send a m.key.verification.request
             const [, request] = await Promise.all([
@@ -1050,6 +1082,13 @@ describe("verification", () => {
         });
 
         it("ignores old verification requests", async () => {
+            const debug = jest.fn();
+            const info = jest.fn();
+            const warn = jest.fn();
+
+            // @ts-ignore overriding RustCrypto's logger
+            aliceClient.getCrypto()!.logger = { debug, info, warn };
+
             const eventHandler = jest.fn();
             aliceClient.on(CryptoEvent.VerificationRequestReceived, eventHandler);
 
@@ -1064,8 +1103,41 @@ describe("verification", () => {
             const matrixEvent = room.getLiveTimeline().getEvents()[0];
             expect(matrixEvent.getId()).toEqual(verificationRequestEvent.event_id);
 
+            // Wait until the request has been processed. We use a real sleep()
+            // here to make sure any background async tasks are completed.
+            jest.useRealTimers();
+            await waitFor(async () => {
+                expect(info).toHaveBeenCalledWith(
+                    expect.stringMatching(/^Ignoring just-received verification request/),
+                );
+                sleep(100);
+            });
+
             // check that an event has not been raised, and that the request is not found
             expect(eventHandler).not.toHaveBeenCalled();
+            expect(
+                aliceClient.getCrypto()!.findVerificationRequestDMInProgress(TEST_ROOM_ID, "@bob:xyz"),
+            ).not.toBeDefined();
+        });
+
+        it("ignores cancelled verification requests", async () => {
+            // Given a verification request exists
+            const event = createVerificationRequestEvent();
+            returnRoomMessageFromSync(TEST_ROOM_ID, event);
+
+            // Wait for the request to be received
+            await emitPromise(aliceClient, CryptoEvent.VerificationRequestReceived);
+
+            const request = aliceClient.getCrypto()!.findVerificationRequestDMInProgress(TEST_ROOM_ID, "@bob:xyz");
+
+            // When I cancel it
+            fetchMock.put("express:/_matrix/client/v3/rooms/:roomId/send/m.key.verification.cancel/:id", {
+                event_id: event.event_id,
+            });
+            await request!.cancel();
+            expect(request!.phase).toEqual(VerificationPhase.Cancelled);
+
+            // Then it is no longer found
             expect(
                 aliceClient.getCrypto()!.findVerificationRequestDMInProgress(TEST_ROOM_ID, "@bob:xyz"),
             ).not.toBeDefined();
@@ -1476,6 +1548,7 @@ describe("verification", () => {
             userId: TEST_USER_ID,
             accessToken: "akjgkrgjs",
             deviceId: "device_under_test",
+            logger: new DebugLogger(debug(`matrix-js-sdk:verification`)),
             ...opts,
         });
         await client.initRustCrypto();
@@ -1540,10 +1613,10 @@ function expectSendToDeviceMessage(msgtype: string): Promise<{ messages: any }> 
  *  @returns a map of secret name to promise that will resolve (with the id of the secret request) when the secret is requested.
  */
 function mockSecretRequestAndGetPromises(): Map<string, Promise<string>> {
-    const mskRequestDefer = defer<string>();
-    const sskRequestDefer = defer<string>();
-    const uskRequestDefer = defer<string>();
-    const backupKeyRequestDefer = defer<string>();
+    const mskRequestResolvers = Promise.withResolvers<string>();
+    const sskRequestResolvers = Promise.withResolvers<string>();
+    const uskRequestResolvers = Promise.withResolvers<string>();
+    const backupKeyRequestResolvers = Promise.withResolvers<string>();
 
     fetchMock.put(
         new RegExp(`/_matrix/client/(r0|v3)/sendToDevice/m.secret.request`),
@@ -1555,13 +1628,13 @@ function mockSecretRequestAndGetPromises(): Map<string, Promise<string>> {
                 const name = content.name;
                 const requestId = content.request_id;
                 if (name == "m.cross_signing.user_signing") {
-                    uskRequestDefer.resolve(requestId);
+                    uskRequestResolvers.resolve(requestId);
                 } else if (name == "m.cross_signing.master") {
-                    mskRequestDefer.resolve(requestId);
+                    mskRequestResolvers.resolve(requestId);
                 } else if (name == "m.cross_signing.self_signing") {
-                    sskRequestDefer.resolve(requestId);
+                    sskRequestResolvers.resolve(requestId);
                 } else if (name == "m.megolm_backup.v1") {
-                    backupKeyRequestDefer.resolve(requestId);
+                    backupKeyRequestResolvers.resolve(requestId);
                 }
             }
             return {};
@@ -1570,10 +1643,10 @@ function mockSecretRequestAndGetPromises(): Map<string, Promise<string>> {
     );
 
     const promiseMap = new Map<string, Promise<string>>();
-    promiseMap.set("m.cross_signing.master", mskRequestDefer.promise);
-    promiseMap.set("m.cross_signing.self_signing", sskRequestDefer.promise);
-    promiseMap.set("m.cross_signing.user_signing", uskRequestDefer.promise);
-    promiseMap.set("m.megolm_backup.v1", backupKeyRequestDefer.promise);
+    promiseMap.set("m.cross_signing.master", mskRequestResolvers.promise);
+    promiseMap.set("m.cross_signing.self_signing", sskRequestResolvers.promise);
+    promiseMap.set("m.cross_signing.user_signing", uskRequestResolvers.promise);
+    promiseMap.set("m.megolm_backup.v1", backupKeyRequestResolvers.promise);
     return promiseMap;
 }
 
@@ -1604,7 +1677,7 @@ function sha256(commitmentStr: string): string {
     return encodeUnpaddedBase64(createHash("sha256").update(commitmentStr, "utf8").digest());
 }
 
-function encodeUnpaddedBase64(uint8Array: ArrayBuffer | Uint8Array): string {
+function encodeUnpaddedBase64(uint8Array: ArrayLike<number>): string {
     return Buffer.from(uint8Array).toString("base64").replace(/=+$/g, "");
 }
 
@@ -1638,7 +1711,7 @@ function buildReadyMessage(
 }
 
 /** build an m.key.verification.start to-device message suitable for the m.reciprocate.v1 flow, originating from the dummy device */
-function buildReciprocateStartMessage(transactionId: string, sharedSecret: ArrayBuffer) {
+function buildReciprocateStartMessage(transactionId: string, sharedSecret: ArrayLike<number>) {
     return {
         type: "m.key.verification.start",
         content: {

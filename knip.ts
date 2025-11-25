@@ -9,12 +9,9 @@ export default {
         "src/crypto-api/index.ts",
         "src/testing.ts",
         "src/matrix.ts",
+        "src/utils.ts", // not really an entrypoint but we have deprecated `defer` there
         "scripts/**",
         "spec/**",
-        // XXX: these look entirely unused
-        "src/crypto/aes.ts",
-        "src/crypto/crypto.ts",
-        "src/crypto/recoverykey.ts",
         // XXX: these should be re-exported by one of the supported exports
         "src/matrixrtc/index.ts",
         "src/sliding-sync.ts",
@@ -37,6 +34,8 @@ export default {
         "ts-node",
         // Used by `@babel/plugin-transform-runtime`
         "@babel/runtime",
+        // Transitive dep of jest
+        "jsdom",
     ],
     ignoreBinaries: [
         // Used when available by reusable workflow `.github/workflows/release-make.yml`

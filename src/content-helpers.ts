@@ -189,13 +189,15 @@ export type MakeTopicContent = (topic: string | null | undefined, htmlTopic?: st
 
 export const makeTopicContent: MakeTopicContent = (topic, htmlTopic) => {
     const renderings = [];
-    if (isProvided(topic)) {
-        renderings.push({ body: topic, mimetype: "text/plain" });
-    }
+    // Put HTML first because clients will render the first type in
+    // the array that they understand
     if (isProvided(htmlTopic)) {
         renderings.push({ body: htmlTopic, mimetype: "text/html" });
     }
-    return { topic, [M_TOPIC.name]: renderings };
+    if (isProvided(topic)) {
+        renderings.push({ body: topic, mimetype: "text/plain" });
+    }
+    return { topic, [M_TOPIC.name]: { "m.text": renderings } };
 };
 
 export type TopicState = {
@@ -204,7 +206,11 @@ export type TopicState = {
 };
 
 export const parseTopicContent = (content: MRoomTopicEventContent): TopicState => {
-    const mtopic = M_TOPIC.findIn<MTopicContent>(content);
+    const mtopicParent = M_TOPIC.findIn<MTopicContent>(content);
+    const mtopic = Array.isArray(mtopicParent) ? mtopicParent : mtopicParent?.["m.text"];
+    // TODO remove support for the old malformed m.topic arrays after a few releases (only allow array in m.text)
+    //      https://github.com/matrix-org/matrix-js-sdk/pull/4984#pullrequestreview-3174251065
+    //const mtopic = M_TOPIC.findIn<MTopicContent>(content)?.["m.text"];
     if (!Array.isArray(mtopic)) {
         return { text: content.topic ?? undefined };
     }

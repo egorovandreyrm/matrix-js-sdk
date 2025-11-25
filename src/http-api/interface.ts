@@ -16,6 +16,7 @@ limitations under the License.
 
 import { type MatrixError } from "./errors.ts";
 import { type Logger } from "../logger.ts";
+import { type QueryDict } from "../utils.ts";
 
 export type Body = Record<string, any> | BodyInit;
 
@@ -24,9 +25,20 @@ export type Body = Record<string, any> | BodyInit;
  * Unencrypted access and (optional) refresh token
  */
 export type AccessTokens = {
+    /**
+     * The new access token to use for authenticated requests
+     */
     accessToken: string;
+    /**
+     * The new refresh token to use for refreshing tokens, optional
+     */
     refreshToken?: string;
+    /**
+     * Approximate date when the access token will expire, optional
+     */
+    expiry?: Date;
 };
+
 /**
  * @experimental
  * Function that performs token refresh using the given refreshToken.
@@ -35,13 +47,15 @@ export type AccessTokens = {
  * Can be passed to HttpApi instance as {@link IHttpOpts.tokenRefreshFunction} during client creation {@link ICreateClientOpts}
  */
 export type TokenRefreshFunction = (refreshToken: string) => Promise<AccessTokens>;
+
+/** Options object for `FetchHttpApi` and {@link MatrixHttpApi}. */
 export interface IHttpOpts {
     fetchFn?: typeof globalThis.fetch;
 
     baseUrl: string;
     idBaseUrl?: string;
     prefix: string;
-    extraParams?: Record<string, string>;
+    extraParams?: QueryDict;
 
     accessToken?: string;
     /**
@@ -55,24 +69,17 @@ export interface IHttpOpts {
     tokenRefreshFunction?: TokenRefreshFunction;
     useAuthorizationHeader?: boolean; // defaults to true
 
+    /** For historical reasons, must be set to `true`. Will eventually be removed. */
     onlyData?: boolean;
+
     localTimeoutMs?: number;
 
     /** Optional logger instance. If provided, requests and responses will be logged. */
     logger?: Logger;
 }
 
-export interface IRequestOpts extends Pick<RequestInit, "priority"> {
-    /**
-     * The alternative base url to use.
-     * If not specified, uses this.opts.baseUrl
-     */
-    baseUrl?: string;
-    /**
-     * The full prefix to use e.g.
-     * "/_matrix/client/v2_alpha". If not specified, uses this.opts.prefix.
-     */
-    prefix?: string;
+/** Options object for `FetchHttpApi.requestOtherUrl`. */
+export interface BaseRequestOpts extends Pick<RequestInit, "priority"> {
     /**
      * map of additional request headers
      */
@@ -84,7 +91,46 @@ export interface IRequestOpts extends Pick<RequestInit, "priority"> {
      */
     localTimeoutMs?: number;
     keepAlive?: boolean; // defaults to false
-    json?: boolean; // defaults to true
+
+    /**
+     * By default, we will:
+     *
+     *  *  If the `body` is an object, JSON-encode it and set `Content-Type: application/json` in the
+     *     request headers (unless overridden by {@link headers}).
+     *
+     *  * Set `Accept: application/json` in the request headers (again, unless overridden by {@link headers}).
+     *
+     *  * Parse the response as JSON and return the parsed response.
+     *
+     * Setting this to `false` inhibits all three behaviors, and the response is instead parsed as a UTF-8 string. It
+     * defaults to `true`, unless {@link rawResponseBody} is set.
+     *
+     * @deprecated Instead of setting this to `false`, set {@link rawResponseBody} to `true`.
+     */
+    json?: boolean;
+
+    /**
+     * Setting this to `true` does two things:
+     *
+     *  * Inhibits the automatic addition of `Accept: application/json` in the request headers.
+     *
+     *  * Causes the raw response to be returned as a {@link https://developer.mozilla.org/en-US/docs/Web/API/Blob|Blob}
+     *    instead of parsing it as JSON.
+     */
+    rawResponseBody?: boolean;
+}
+
+export interface IRequestOpts extends BaseRequestOpts {
+    /**
+     * The alternative base url to use.
+     * If not specified, uses this.opts.baseUrl
+     */
+    baseUrl?: string;
+    /**
+     * The full prefix to use e.g.
+     * "/_matrix/client/v2_alpha". If not specified, uses this.opts.prefix.
+     */
+    prefix?: string;
 
     // Set to true to prevent the request function from emitting a Session.logged_out event.
     // This is intended for use on endpoints where M_UNKNOWN_TOKEN is a valid/notable error response,

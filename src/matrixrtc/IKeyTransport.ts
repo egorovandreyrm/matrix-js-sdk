@@ -14,11 +14,17 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-import { type CallMembership } from "./CallMembership.ts";
+import { type ParticipantDeviceInfo } from "./types.ts";
 
 export enum KeyTransportEvents {
     ReceivedKeys = "received_keys",
+    NotSupportedError = "not_supported_error",
 }
+
+export type KeyTransportEventsHandlerMap = {
+    [KeyTransportEvents.ReceivedKeys]: KeyTransportEventListener;
+    [KeyTransportEvents.NotSupportedError]: () => void;
+};
 
 export type KeyTransportEventListener = (
     userId: string,
@@ -27,10 +33,6 @@ export type KeyTransportEventListener = (
     index: number,
     timestamp: number,
 ) => void;
-
-export type KeyTransportEventsHandlerMap = {
-    [KeyTransportEvents.ReceivedKeys]: KeyTransportEventListener;
-};
 
 /**
  * Generic interface for the transport used to share room keys.
@@ -43,7 +45,7 @@ export interface IKeyTransport {
      * @param index
      * @param members - The participants that should get they key
      */
-    sendKey(keyBase64Encoded: string, index: number, members: CallMembership[]): Promise<void>;
+    sendKey(keyBase64Encoded: string, index: number, members: ParticipantDeviceInfo[]): Promise<void>;
 
     /** Subscribe to keys from this transport. */
     on(event: KeyTransportEvents.ReceivedKeys, listener: KeyTransportEventListener): this;

@@ -18,11 +18,12 @@ limitations under the License.
  * This is an internal module. See {@link MatrixHttpApi} for the public class.
  */
 
-import { checkObjectHasKeys, encodeParams } from "../utils.ts";
+import { checkObjectHasKeys, deepCopy, encodeParams } from "../utils.ts";
 import { type TypedEventEmitter } from "../models/typed-event-emitter.ts";
 import { Method } from "./method.ts";
-import { ConnectionError, MatrixError, TokenRefreshError, TokenRefreshLogoutError } from "./errors.ts";
+import { ConnectionError, MatrixError, TokenRefreshError } from "./errors.ts";
 import {
+    type BaseRequestOpts,
     HttpApiEvent,
     type HttpApiEventHandlerMap,
     type IHttpOpts,
@@ -31,34 +32,23 @@ import {
 } from "./interface.ts";
 import { anySignal, parseErrorResponse, timeoutSignal } from "./utils.ts";
 import { type QueryDict } from "../utils.ts";
-import { singleAsyncExecution } from "../utils/decorators.ts";
-
-interface TypedResponse<T> extends Response {
-    json(): Promise<T>;
-}
-
-export type ResponseType<T, O extends IHttpOpts> = O extends { json: false }
-    ? string
-    : O extends { onlyData: true } | undefined
-      ? T
-      : TypedResponse<T>;
-
-const enum TokenRefreshOutcome {
-    Success = "success",
-    Failure = "failure",
-    Logout = "logout",
-}
+import { TokenRefresher, TokenRefreshOutcome } from "./refresh.ts";
 
 export class FetchHttpApi<O extends IHttpOpts> {
     private abortController = new AbortController();
+    private readonly tokenRefresher: TokenRefresher;
 
     public constructor(
         private eventEmitter: TypedEventEmitter<HttpApiEvent, HttpApiEventHandlerMap>,
         public readonly opts: O,
     ) {
         checkObjectHasKeys(opts, ["baseUrl", "prefix"]);
-        opts.onlyData = !!opts.onlyData;
+        if (!opts.onlyData) {
+            throw new Error("Constructing FetchHttpApi without `onlyData=true` is no longer supported.");
+        }
         opts.useAuthorizationHeader = opts.useAuthorizationHeader ?? true;
+
+        this.tokenRefresher = new TokenRefresher(opts);
     }
 
     public abort(): void {
@@ -87,7 +77,7 @@ export class FetchHttpApi<O extends IHttpOpts> {
         params: Record<string, string | string[]> | undefined,
         prefix: string,
         accessToken?: string,
-    ): Promise<ResponseType<T, O>> {
+    ): Promise<T> {
         if (!this.opts.idBaseUrl) {
             throw new Error("No identity server base URL set");
         }
@@ -114,12 +104,6 @@ export class FetchHttpApi<O extends IHttpOpts> {
     }
 
     /**
-     * Promise used to block authenticated requests during a token refresh to avoid repeated expected errors.
-     * @private
-     */
-    private tokenRefreshPromise?: Promise<unknown>;
-
-    /**
      * Perform an authorised request to the homeserver.
      * @param method - The HTTP method e.g. "GET".
      * @param path - The HTTP path <b>after</b> the supplied prefix e.g.
@@ -134,49 +118,52 @@ export class FetchHttpApi<O extends IHttpOpts> {
      * When `paramOpts.doNotAttemptTokenRefresh` is true, token refresh will not be attempted
      * when an expired token is encountered. Used to only attempt token refresh once.
      *
-     * @returns Promise which resolves to
-     * ```
-     * {
-     *     data: {Object},
-     *     headers: {Object},
-     *     code: {Number},
-     * }
-     * ```
-     * If `onlyData` is set, this will resolve to the `data` object only.
-     * @returns Rejects with an error if a problem occurred.
-     * This includes network problems and Matrix-specific error JSON.
+     * @returns The parsed response.
+     * @throws Error if a problem occurred. This includes network problems and Matrix-specific error JSON.
      */
-    public async authedRequest<T>(
+    public authedRequest<T>(
         method: Method,
         path: string,
-        queryParams?: QueryDict,
+        queryParams: QueryDict = {},
         body?: Body,
-        paramOpts: IRequestOpts & { doNotAttemptTokenRefresh?: boolean } = {},
-    ): Promise<ResponseType<T, O>> {
-        if (!queryParams) queryParams = {};
+        paramOpts: IRequestOpts = {},
+    ): Promise<T> {
+        return this.doAuthedRequest<T>(1, method, path, queryParams, body, paramOpts);
+    }
 
+    // Wrapper around public method authedRequest to allow for tracking retry attempt counts
+    private async doAuthedRequest<T>(
+        attempt: number,
+        method: Method,
+        path: string,
+        queryParams: QueryDict,
+        body?: Body,
+        paramOpts: IRequestOpts = {},
+    ): Promise<T> {
         // avoid mutating paramOpts so they can be used on retry
-        const opts = { ...paramOpts };
+        const opts = deepCopy(paramOpts);
+        // we have to manually copy the abortSignal over as it is not a plain object
+        opts.abortSignal = paramOpts.abortSignal;
 
-        if (this.opts.accessToken) {
+        // Take a snapshot of the current token state before we start the request so we can reference it if we error
+        const requestSnapshot = await this.tokenRefresher.prepareForRequest();
+        if (requestSnapshot.accessToken) {
             if (this.opts.useAuthorizationHeader) {
                 if (!opts.headers) {
                     opts.headers = {};
                 }
                 if (!opts.headers.Authorization) {
-                    opts.headers.Authorization = "Bearer " + this.opts.accessToken;
+                    opts.headers.Authorization = `Bearer ${requestSnapshot.accessToken}`;
                 }
                 if (queryParams.access_token) {
                     delete queryParams.access_token;
                 }
             } else if (!queryParams.access_token) {
-                queryParams.access_token = this.opts.accessToken;
+                queryParams.access_token = requestSnapshot.accessToken;
             }
         }
 
         try {
-            // Await any ongoing token refresh
-            await this.tokenRefreshPromise;
             const response = await this.request<T>(method, path, queryParams, body, opts);
             return response;
         } catch (error) {
@@ -184,59 +171,24 @@ export class FetchHttpApi<O extends IHttpOpts> {
                 throw error;
             }
 
-            if (error.errcode === "M_UNKNOWN_TOKEN" && !opts.doNotAttemptTokenRefresh) {
-                const tokenRefreshPromise = this.tryRefreshToken();
-                this.tokenRefreshPromise = Promise.allSettled([tokenRefreshPromise]);
-                const outcome = await tokenRefreshPromise;
-
+            if (error.errcode === "M_UNKNOWN_TOKEN") {
+                const outcome = await this.tokenRefresher.handleUnknownToken(requestSnapshot, attempt);
                 if (outcome === TokenRefreshOutcome.Success) {
                     // if we got a new token retry the request
-                    return this.authedRequest(method, path, queryParams, body, {
-                        ...paramOpts,
-                        doNotAttemptTokenRefresh: true,
-                    });
+                    return this.doAuthedRequest(attempt + 1, method, path, queryParams, body, paramOpts);
                 }
                 if (outcome === TokenRefreshOutcome.Failure) {
                     throw new TokenRefreshError(error);
                 }
-                // Fall through to SessionLoggedOut handler below
-            }
 
-            // otherwise continue with error handling
-            if (error.errcode == "M_UNKNOWN_TOKEN" && !opts?.inhibitLogoutEmit) {
-                this.eventEmitter.emit(HttpApiEvent.SessionLoggedOut, error);
+                if (!opts?.inhibitLogoutEmit) {
+                    this.eventEmitter.emit(HttpApiEvent.SessionLoggedOut, error);
+                }
             } else if (error.errcode == "M_CONSENT_NOT_GIVEN") {
                 this.eventEmitter.emit(HttpApiEvent.NoConsent, error.message, error.data.consent_uri);
             }
 
             throw error;
-        }
-    }
-
-    /**
-     * Attempt to refresh access tokens.
-     * On success, sets new access and refresh tokens in opts.
-     * @returns Promise that resolves to a boolean - true when token was refreshed successfully
-     */
-    @singleAsyncExecution
-    private async tryRefreshToken(): Promise<TokenRefreshOutcome> {
-        if (!this.opts.refreshToken || !this.opts.tokenRefreshFunction) {
-            return TokenRefreshOutcome.Logout;
-        }
-
-        try {
-            const { accessToken, refreshToken } = await this.opts.tokenRefreshFunction(this.opts.refreshToken);
-            this.opts.accessToken = accessToken;
-            this.opts.refreshToken = refreshToken;
-            // successfully got new tokens
-            return TokenRefreshOutcome.Success;
-        } catch (error) {
-            this.opts.logger?.warn("Failed to refresh token", error);
-            // If we get a TokenError or MatrixError, we should log out, otherwise assume transient
-            if (error instanceof TokenRefreshLogoutError || error instanceof MatrixError) {
-                return TokenRefreshOutcome.Logout;
-            }
-            return TokenRefreshOutcome.Failure;
         }
     }
 
@@ -253,18 +205,8 @@ export class FetchHttpApi<O extends IHttpOpts> {
      *
      * @param opts - additional options
      *
-     * @returns Promise which resolves to
-     * ```
-     * {
-     *  data: {Object},
-     *  headers: {Object},
-     *  code: {Number},
-     * }
-     * ```
-     * If `onlyData</code> is set, this will resolve to the <code>data`
-     * object only.
-     * @returns Rejects with an error if a problem
-     * occurred. This includes network problems and Matrix-specific error JSON.
+     * @returns The parsed response.
+     * @throws Error if a problem occurred. This includes network problems and Matrix-specific error JSON.
      */
     public request<T>(
         method: Method,
@@ -272,7 +214,7 @@ export class FetchHttpApi<O extends IHttpOpts> {
         queryParams?: QueryDict,
         body?: Body,
         opts?: IRequestOpts,
-    ): Promise<ResponseType<T, O>> {
+    ): Promise<T> {
         const fullUri = this.getUrl(path, queryParams, opts?.prefix, opts?.baseUrl);
         return this.requestOtherUrl<T>(method, fullUri, body, opts);
     }
@@ -286,30 +228,27 @@ export class FetchHttpApi<O extends IHttpOpts> {
      *
      * @param opts - additional options
      *
-     * @returns Promise which resolves to data unless `onlyData` is specified as false,
-     * where the resolved value will be a fetch Response object.
-     * @returns Rejects with an error if a problem
-     * occurred. This includes network problems and Matrix-specific error JSON.
+     * @returns The parsed response.
+     * @throws Error if a problem occurred. This includes network problems and Matrix-specific error JSON.
      */
     public async requestOtherUrl<T>(
         method: Method,
         url: URL | string,
         body?: Body,
-        opts: Pick<IRequestOpts, "headers" | "json" | "localTimeoutMs" | "keepAlive" | "abortSignal" | "priority"> = {},
-    ): Promise<ResponseType<T, O>> {
+        opts: BaseRequestOpts = {},
+    ): Promise<T> {
+        if (opts.json !== undefined && opts.rawResponseBody !== undefined) {
+            throw new Error("Invalid call to `FetchHttpApi` sets both `opts.json` and `opts.rawResponseBody`");
+        }
+
         const urlForLogs = this.sanitizeUrlForLogs(url);
+
         this.opts.logger?.debug(`FetchHttpApi: --> ${method} ${urlForLogs}`);
 
         const headers = Object.assign({}, opts.headers || {});
-        const json = opts.json ?? true;
-        // We can't use getPrototypeOf here as objects made in other contexts e.g. over postMessage won't have same ref
-        const jsonBody = json && body?.constructor?.name === Object.name;
 
-        if (json) {
-            if (jsonBody && !headers["Content-Type"]) {
-                headers["Content-Type"] = "application/json";
-            }
-
+        const jsonResponse = !opts.rawResponseBody && opts.json !== false;
+        if (jsonResponse) {
             if (!headers["Accept"]) {
                 headers["Accept"] = "application/json";
             }
@@ -325,14 +264,27 @@ export class FetchHttpApi<O extends IHttpOpts> {
             signals.push(opts.abortSignal);
         }
 
+        // If the body is an object, encode it as JSON and set the `Content-Type` header,
+        // unless that has been explicitly inhibited by setting `opts.json: false`.
+        // We can't use getPrototypeOf here as objects made in other contexts e.g. over postMessage won't have same ref
         let data: BodyInit;
-        if (jsonBody) {
+        if (opts.json !== false && body?.constructor?.name === Object.name) {
             data = JSON.stringify(body);
+            if (!headers["Content-Type"]) {
+                headers["Content-Type"] = "application/json";
+            }
         } else {
             data = body as BodyInit;
         }
 
         const { signal, cleanup } = anySignal(signals);
+
+        // Set cache mode based on presence of Authorization header.
+        // Browsers/proxies do not cache responses to requests with Authorization headers.
+        // So specifying "no-cache" is redundant, and actually prevents caching
+        // of preflight requests in CORS scenarios. As such, we only set "no-cache"
+        // when there is no Authorization header.
+        const cacheMode = "Authorization" in headers ? undefined : "no-cache";
 
         let res: Response;
         const start = Date.now();
@@ -346,7 +298,7 @@ export class FetchHttpApi<O extends IHttpOpts> {
                 redirect: "follow",
                 referrer: "",
                 referrerPolicy: "no-referrer",
-                cache: "no-cache",
+                cache: cacheMode,
                 credentials: "omit", // we send credentials via headers
                 keepalive: keepAlive,
                 priority: opts.priority,
@@ -369,10 +321,13 @@ export class FetchHttpApi<O extends IHttpOpts> {
             throw parseErrorResponse(res, await res.text());
         }
 
-        if (this.opts.onlyData) {
-            return (json ? res.json() : res.text()) as ResponseType<T, O>;
+        if (opts.rawResponseBody) {
+            return (await res.blob()) as T;
+        } else if (jsonResponse) {
+            return await res.json();
+        } else {
+            return (await res.text()) as T;
         }
-        return res as ResponseType<T, O>;
     }
 
     private sanitizeUrlForLogs(url: URL | string): string {
@@ -411,9 +366,12 @@ export class FetchHttpApi<O extends IHttpOpts> {
             ? baseUrlWithFallback.slice(0, -1)
             : baseUrlWithFallback;
         const url = new URL(baseUrlWithoutTrailingSlash + (prefix ?? this.opts.prefix) + path);
-        if (queryParams) {
-            encodeParams(queryParams, url.searchParams);
+        // If there are any params, encode and append them to the URL.
+        if (this.opts.extraParams || queryParams) {
+            const mergedParams = { ...this.opts.extraParams, ...queryParams };
+            encodeParams(mergedParams, url.searchParams);
         }
+
         return url;
     }
 }

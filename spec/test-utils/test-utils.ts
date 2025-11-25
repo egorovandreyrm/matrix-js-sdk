@@ -1,9 +1,7 @@
-// load olm before the sdk if possible
-import "../olm-loader";
+import mkdebug from "debug";
 
 // eslint-disable-next-line no-restricted-imports
 import type EventEmitter from "events";
-import { logger } from "../../src/logger";
 import {
     type IContent,
     type IEvent,
@@ -27,6 +25,8 @@ import { eventMapperFor } from "../../src/event-mapper";
 import { TEST_ROOM_ID } from "./test-data";
 import { KnownMembership, type Membership } from "../../src/@types/membership";
 
+const debug = mkdebug("test-utils");
+
 /**
  * Return a promise that is resolved when the client next emits a
  * SYNCING event.
@@ -41,7 +41,7 @@ export function syncPromise(client: MatrixClient, count = 1): Promise<void> {
 
     const p = new Promise<void>((resolve) => {
         const cb = (state: SyncState) => {
-            logger.log(`${Date.now()} syncPromise(${count}): ${state}`);
+            debug(`syncPromise(${count}): ${state}`);
             if (state === SyncState.Syncing) {
                 resolve();
             } else {
@@ -63,7 +63,11 @@ export function syncPromise(client: MatrixClient, count = 1): Promise<void> {
  *
  * @returns the sync response
  */
-export function getSyncResponse(roomMembers: string[], roomId = TEST_ROOM_ID): ISyncResponse {
+export function getSyncResponse(
+    roomMembers: string[],
+    roomId = TEST_ROOM_ID,
+    encryptStateEvents = false,
+): ISyncResponse {
     const roomResponse: IJoinedRoom = {
         summary: {
             "m.heroes": [],
@@ -77,7 +81,8 @@ export function getSyncResponse(roomMembers: string[], roomId = TEST_ROOM_ID): I
                     type: "m.room.encryption",
                     state_key: "",
                     content: {
-                        algorithm: "m.megolm.v1.aes-sha2",
+                        "algorithm": "m.megolm.v1.aes-sha2",
+                        "io.element.msc3414.encrypt_state_events": encryptStateEvents,
                     },
                 }),
             ],
@@ -522,25 +527,25 @@ export async function awaitDecryption(
     // already
     if (event.getClearContent() !== null) {
         if (waitOnDecryptionFailure && event.isDecryptionFailure()) {
-            logger.log(`${Date.now()}: event ${event.getId()} got decryption error; waiting`);
+            debug(`event ${event.getId()} got decryption error; waiting`);
         } else {
             return event;
         }
     } else {
-        logger.log(`${Date.now()}: event ${event.getId()} is not yet decrypted; waiting`);
+        debug(`event ${event.getId()} is not yet decrypted; waiting`);
     }
 
     return new Promise((resolve) => {
         if (waitOnDecryptionFailure) {
             event.on(MatrixEventEvent.Decrypted, (ev, err) => {
-                logger.log(`${Date.now()}: MatrixEventEvent.Decrypted for event ${event.getId()}: ${err ?? "success"}`);
+                debug(`MatrixEventEvent.Decrypted for event ${event.getId()}: ${err ?? "success"}`);
                 if (!err) {
                     resolve(ev);
                 }
             });
         } else {
             event.once(MatrixEventEvent.Decrypted, (ev, err) => {
-                logger.log(`${Date.now()}: MatrixEventEvent.Decrypted for event ${event.getId()}: ${err ?? "success"}`);
+                debug(`MatrixEventEvent.Decrypted for event ${event.getId()}: ${err ?? "success"}`);
                 resolve(ev);
             });
         }
@@ -591,4 +596,99 @@ export async function advanceTimersUntil<T>(promise: Promise<T>): Promise<T> {
     }
 
     return await promise;
+}
+
+export function jestFakeTimersAreEnabled(): boolean {
+    return Object.prototype.hasOwnProperty.call(setTimeout, "clock");
+}
+
+/**
+ * Run `callback` in a loop, until it returns a successful result (i.e. it does not throw), or we reach a timeout
+ *
+ * Based on the function of the same name in the {@link https://testing-library.com/docs/dom-testing-library/api-async/#waitfor DOM testing library}.
+ *
+ * @param callback - The function to call to check if we can proceed. If it returns a result (including a falsey one),
+ *   `waitFor` returns that result. If it throws, `waitFor` continues to wait.
+ *
+ *   May return a promise, in which case no further checks are done until the promise resolves.
+ *
+ * @param timeout - The time to wait for, overall, in ms. If `callback` still hasn't returned a successful result after
+ *    this time, `waitFor` will throw an error.
+ *
+ *    Defaults to 1000.
+ *
+ * @param interval - How often to call `callback`. Defaults to 50.
+ */
+export function waitFor<T>(
+    callback: () => Promise<T> | T,
+    {
+        timeout = 1000,
+        interval = 50,
+    }: {
+        timeout?: number;
+        interval?: number;
+    } = {},
+): Promise<T> {
+    return new Promise((resolve, reject) => {
+        let lastError: any;
+        let finished = false;
+        let intervalId: ReturnType<typeof setTimeout> | undefined;
+        let promisePending = false;
+
+        const overallTimeoutTimer = setTimeout(handleTimeout, timeout);
+        const usingJestFakeTimers = jestFakeTimersAreEnabled();
+        if (usingJestFakeTimers) {
+            checkCallback();
+
+            while (!finished) {
+                jest.advanceTimersByTime(interval);
+
+                // Could have timed-out
+                if (finished) break;
+
+                checkCallback();
+            }
+        } else {
+            intervalId = setInterval(checkCallback, interval);
+            checkCallback();
+        }
+
+        function checkCallback() {
+            if (promisePending) {
+                // still waiting for the previous check
+                return;
+            }
+
+            async function doCheck() {
+                try {
+                    const result = await callback();
+                    onDone();
+                    resolve(result);
+                } catch (error) {
+                    // Save the most recent callback error to reject the promise with it in the event of a timeout
+                    lastError = error;
+                }
+            }
+
+            promisePending = true;
+            doCheck().finally(() => {
+                promisePending = false;
+            });
+        }
+
+        function onDone(): void {
+            finished = true;
+            clearTimeout(overallTimeoutTimer);
+            if (intervalId !== undefined) clearInterval(intervalId);
+        }
+
+        function handleTimeout() {
+            onDone();
+            if (lastError) {
+                reject(lastError);
+            } else {
+                reject(new Error("Timed out in waitFor."));
+            }
+        }
+    });
 }
