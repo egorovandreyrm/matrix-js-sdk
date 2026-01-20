@@ -2323,6 +2323,13 @@ export class Room extends ReadReceipt<RoomEmittedEvents, RoomEventHandlerMap> {
             // poll creation can fail for malformed poll start events
             return;
         }
+
+        const relationEventId = event.relationEventId;
+
+        if (relationEventId && this.streams.has(relationEventId)) {
+            const poll = this.streams.get(relationEventId);
+            poll?.onNewRelation(event);
+        }
     }
 
     /**
