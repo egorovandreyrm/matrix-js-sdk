@@ -18,7 +18,6 @@ export class StreamStartEvent extends ExtensibleEvent<StreamStartEventContent> {
     public readonly third_party: boolean;
 
 
-
     /**
      * Creates a new PollStartEvent from a pure format. Note that the event is *not*
      * parsed here: it will be treated as a literal m.poll.start primary typed event.

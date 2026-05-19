@@ -5454,9 +5454,9 @@ math-intrinsics@^1.1.0:
   resolved "https://registry.yarnpkg.com/math-intrinsics/-/math-intrinsics-1.1.0.tgz#a0dd74be81e2aa5c2f27e65ce283605ee4e2b7f9"
   integrity sha512-/IXtbwEk5HTPyEwyKX6hGkYXxM9nbj64B+ilVJnC/R6B0pH5G4V3b0pVbL7DBj4tkhBAppbQUlf6F6Xl9LHu1g==
 
-"matrix-events-sdk@git+https://github.com/egorovandreyrm/matrix-events-sdk.git#b2629c469a365ae1b8ee54b0dfcae3f4916cceea":
+"matrix-events-sdk@git+https://github.com/egorovandreyrm/matrix-events-sdk.git#a1debce7926c905032cdb099fd21a79befb04c68":
   version "0.0.1"
-  resolved "git+https://github.com/egorovandreyrm/matrix-events-sdk.git#b2629c469a365ae1b8ee54b0dfcae3f4916cceea"
+  resolved "git+https://github.com/egorovandreyrm/matrix-events-sdk.git#a1debce7926c905032cdb099fd21a79befb04c68"
 
 matrix-mock-request@^2.5.0:
   version "2.6.0"

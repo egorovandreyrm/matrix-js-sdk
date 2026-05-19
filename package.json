@@ -55,7 +55,7 @@
         "content-type": "^1.0.4",
         "jwt-decode": "^4.0.0",
         "loglevel": "^1.9.2",
-        "matrix-events-sdk": "git+https://github.com/egorovandreyrm/matrix-events-sdk.git#b2629c469a365ae1b8ee54b0dfcae3f4916cceea",
+        "matrix-events-sdk": "git+https://github.com/egorovandreyrm/matrix-events-sdk.git#a1debce7926c905032cdb099fd21a79befb04c68",
         "matrix-widget-api": "^1.14.0",
         "oidc-client-ts": "^3.0.1",
         "p-retry": "7",

@@ -73,6 +73,7 @@ export * from "./@types/threepids.ts";
 export * from "./@types/auth.ts";
 export * from "./@types/polls.ts";
 export * from "./@types/streams.ts";
+export * from "./@types/map_pin.ts";
 export type * from "./@types/local_notifications.ts";
 export type * from "./@types/registration.ts";
 export * from "./@types/read_receipts.ts";
