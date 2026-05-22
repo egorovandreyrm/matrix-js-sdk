@@ -34,6 +34,7 @@ import { M_BEACON, M_BEACON_INFO } from "../@types/beacon.ts";
 import { KnownMembership } from "../@types/membership.ts";
 import { type RoomJoinRulesEventContent } from "../@types/state_events.ts";
 import { shouldUseHydraForRoomVersion } from "../utils/roomVersion.ts";
+import {M_MAP_PIN} from "../@types/map_pin.ts";
 
 export interface IMarkerFoundOptions {
     /** Whether the timeline was empty before the marker event arrived in the
@@ -838,6 +839,8 @@ export class RoomState extends TypedEventEmitter<EmittedEvents, EventHandlerMap>
 
         if (!canRedact) return false;
         if (mxEvent.getSender() === userId) return true;
+
+        if (M_MAP_PIN == mxEvent.getType()) return false;
 
         return this.hasSufficientPowerLevelFor("redact", member.powerLevel);
     }
