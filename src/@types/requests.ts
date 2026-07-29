@@ -40,10 +40,10 @@ export interface IJoinRoomOpts {
     viaServers?: string[];
 
     /**
-     * When accepting an invite, whether to accept encrypted history shared by the inviter via the experimental
-     * support for [MSC4268](https://github.com/matrix-org/matrix-spec-proposals/pull/4268).
+     * Previously, configured whether to accept encrypted history shared by the inviter. This is now always enabled,
+     * and the setting is only retained to avoid a breaking change to the API. It has no effect.
      *
-     * @experimental
+     * @deprecated
      */
     acceptSharedHistory?: boolean;
 }
@@ -56,11 +56,10 @@ export interface InviteOpts {
     reason?: string;
 
     /**
-     * Before sending the invite, if the room is encrypted, share the keys for any messages sent while the history
-     * visibility was `shared`, via the experimental
-     * support for [MSC4268](https://github.com/matrix-org/matrix-spec-proposals/pull/4268).
+     * Previously, configured whether to send encrypted history if the visibility settings allow it.
+     * This is now always enabled, and the setting is only retained to avoid a breaking change to the API. It has no effect.
      *
-     * @experimental
+     * @deprecated
      */
     shareEncryptedHistory?: boolean;
 }
@@ -298,12 +297,12 @@ export interface IRelationsResponse {
 }
 
 export interface IContextResponse {
-    end: string;
-    start: string;
-    state: IEventWithRoomId[];
-    events_before: IEventWithRoomId[];
-    events_after: IEventWithRoomId[];
-    event: IEventWithRoomId;
+    end?: string;
+    start?: string;
+    state?: IEventWithRoomId[];
+    events_before?: IEventWithRoomId[];
+    events_after?: IEventWithRoomId[];
+    event?: IEventWithRoomId;
 }
 
 export interface IEventsResponse {

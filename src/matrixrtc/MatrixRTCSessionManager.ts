@@ -1,5 +1,5 @@
 /*
-Copyright 2023 The Matrix.org Foundation C.I.C.
+Copyright 2023-2026 The Matrix.org Foundation C.I.C.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -20,8 +20,10 @@ import { TypedEventEmitter } from "../models/typed-event-emitter.ts";
 import { type Room } from "../models/room.ts";
 import { RoomStateEvent } from "../models/room-state.ts";
 import { type MatrixEvent } from "../models/event.ts";
-import { MatrixRTCSession, type SlotDescription } from "./MatrixRTCSession.ts";
+import { MatrixRTCSession } from "./MatrixRTCSession.ts";
 import { EventType } from "../@types/event.ts";
+import { type SlotDescription } from "./types.ts";
+import { computeSlotId } from "./utils.ts";
 
 export enum MatrixRTCSessionManagerEvents {
     // A member has joined the MatrixRTC session, creating an active session in a room where there wasn't previously
@@ -56,17 +58,17 @@ export class MatrixRTCSessionManager extends TypedEventEmitter<MatrixRTCSessionM
     public constructor(
         rootLogger: Logger,
         private client: MatrixClient,
-        private readonly slotDescription: SlotDescription = { application: "m.call", id: "" }, // Default to the Matrix Call application
+        private readonly slotDescription: SlotDescription = { application: "m.call", id: "ROOM" }, // Default to the Matrix Call application
     ) {
         super();
-        this.logger = rootLogger.getChild("[MatrixRTCSessionManager]");
+        this.logger = rootLogger.getChild(`[MatrixRTCSessionManager ${computeSlotId(slotDescription)}]`);
     }
 
     public start(): void {
         // We shouldn't need to null-check here, but matrix-client.spec.ts mocks getRooms
         // returning nothing, and breaks tests if you change it to return an empty array :'(
         for (const room of this.client.getRooms() ?? []) {
-            const session = MatrixRTCSession.sessionForRoom(this.client, room, this.slotDescription);
+            const session = MatrixRTCSession.sessionForSlot(this.client, room, this.slotDescription);
             if (session.memberships.length > 0) {
                 this.roomSessions.set(room.roomId, session);
             }
@@ -104,7 +106,7 @@ export class MatrixRTCSessionManager extends TypedEventEmitter<MatrixRTCSessionM
         if (!this.roomSessions.has(room.roomId)) {
             this.roomSessions.set(
                 room.roomId,
-                MatrixRTCSession.sessionForRoom(this.client, room, this.slotDescription),
+                MatrixRTCSession.sessionForSlot(this.client, room, this.slotDescription),
             );
         }
 
@@ -112,7 +114,7 @@ export class MatrixRTCSessionManager extends TypedEventEmitter<MatrixRTCSessionM
     }
 
     private onRoom = (room: Room): void => {
-        this.refreshRoom(room);
+        void this.refreshRoom(room);
     };
 
     private readonly onEvent = (event: MatrixEvent): void => {
@@ -123,7 +125,7 @@ export class MatrixRTCSessionManager extends TypedEventEmitter<MatrixRTCSessionM
         const room = this.client.getRoom(event.getRoomId());
         if (!room) return;
 
-        this.refreshRoom(room);
+        void this.refreshRoom(room);
     };
 
     private readonly onRoomState = (event: MatrixEvent): void => {
@@ -136,10 +138,10 @@ export class MatrixRTCSessionManager extends TypedEventEmitter<MatrixRTCSessionM
             return;
         }
 
-        this.refreshRoom(room);
+        void this.refreshRoom(room);
     };
 
-    private refreshRoom(room: Room): void {
+    private async refreshRoom(room: Room): Promise<void> {
         const isNewSession = !this.roomSessions.has(room.roomId);
         const session = this.getRoomSession(room);
 
@@ -149,7 +151,11 @@ export class MatrixRTCSessionManager extends TypedEventEmitter<MatrixRTCSessionM
         // wasActiveAndKnown = session.memberships.length > 0 and
         // nowActive = session.memberships.length
         // Alternatively we would need to setup some event emission when the RTC session ended.
-        session.onRTCSessionMemberUpdate();
+        // TODO we want to add the emission en session end. This makes the responsibility of the session manager more clear.
+
+        await session._onRTCSessionMemberUpdate().catch((error) => {
+            this.logger.error(`Error updating RTC session members for ${room.roomId}: ${error}`);
+        });
 
         const nowActive = session.memberships.length > 0;
 

@@ -15,14 +15,7 @@ limitations under the License.
 */
 
 import { FetchHttpApi } from "./fetch.ts";
-import {
-    type FileType,
-    type IContentUri,
-    type IHttpOpts,
-    type Upload,
-    type UploadOpts,
-    type UploadResponse,
-} from "./interface.ts";
+import { type FileType, type IHttpOpts, type Upload, type UploadOpts, type UploadResponse } from "./interface.ts";
 import { MediaPrefix } from "./prefix.ts";
 import { type QueryDict, removeElement } from "../utils.ts";
 import * as callbacks from "../realtime-callbacks.ts";
@@ -49,6 +42,8 @@ export class MatrixHttpApi<O extends IHttpOpts> extends FetchHttpApi<O> {
      * @param opts - options object
      *
      * @returns Promise which resolves to response object, or rejects with an error (usually a MatrixError).
+     * @throws May throw a `MatrixSafetyError` if content is deemed unsafe.
+     * @see MatrixSafetyError
      */
     public uploadContent(file: FileType, opts: UploadOpts = {}): Promise<UploadResponse> {
         const includeFilename = opts.includeFilename ?? true;
@@ -173,20 +168,5 @@ export class MatrixHttpApi<O extends IHttpOpts> extends FetchHttpApi<O> {
 
     public getCurrentUploads(): Upload[] {
         return this.uploads;
-    }
-
-    /**
-     * Get the content repository url with query parameters.
-     * @returns An object with a 'base', 'path' and 'params' for base URL,
-     *          path and query parameters respectively.
-     */
-    public getContentUri(): IContentUri {
-        return {
-            base: this.opts.baseUrl,
-            path: MediaPrefix.V3 + "/upload",
-            params: {
-                access_token: this.opts.accessToken!,
-            },
-        };
     }
 }

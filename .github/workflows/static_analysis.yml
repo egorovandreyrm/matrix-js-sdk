@@ -14,58 +14,61 @@ jobs:
         name: "Typescript Syntax Check"
         runs-on: ubuntu-24.04
         steps:
-            - uses: actions/checkout@1af3b93b6815bc44a9784bd300feb67ff0d1eeb3 # v6
-
-            - uses: actions/setup-node@2028fbc5c25fe9cf00d9f06a71cc4710d4507903 # v6
+            - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
               with:
-                  cache: "yarn"
+                  persist-credentials: false
+
+            - uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6
+            - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
+              with:
+                  cache: "pnpm"
                   node-version-file: package.json
 
             - name: Install Deps
-              run: "yarn install"
+              run: "pnpm install"
 
             - name: Typecheck
-              run: "yarn run lint:types"
+              run: "pnpm run lint:types"
 
     js_lint:
-        name: "ESLint"
+        name: "Oxc"
         runs-on: ubuntu-24.04
         steps:
-            - uses: actions/checkout@1af3b93b6815bc44a9784bd300feb67ff0d1eeb3 # v6
-
-            - uses: actions/setup-node@2028fbc5c25fe9cf00d9f06a71cc4710d4507903 # v6
+            - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
               with:
-                  cache: "yarn"
+                  persist-credentials: false
+
+            - uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6
+            - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
+              with:
+                  cache: "pnpm"
                   node-version-file: package.json
 
             - name: Install Deps
-              run: "yarn install"
+              run: "pnpm install"
 
             - name: Run Linter
-              run: "yarn run lint:js"
+              run: "pnpm run lint:js"
 
     node_example_lint:
         name: "Node.js example"
         runs-on: ubuntu-latest
         steps:
-            - uses: actions/checkout@1af3b93b6815bc44a9784bd300feb67ff0d1eeb3 # v6
-
-            - uses: actions/setup-node@2028fbc5c25fe9cf00d9f06a71cc4710d4507903 # v6
+            - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
               with:
-                  cache: "yarn"
+                  persist-credentials: false
+
+            - uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6
+            - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
+              with:
+                  cache: "pnpm"
                   node-version-file: package.json
 
             - name: Install Deps
-              run: "yarn install"
+              run: "pnpm install"
 
             - name: Build Types
-              run: "yarn build:types"
-
-            - uses: actions/setup-node@2028fbc5c25fe9cf00d9f06a71cc4710d4507903 # v6
-              with:
-                  cache: "npm"
-                  node-version-file: "examples/node/package.json"
-                  # cache-dependency-path: '**/package-lock.json'
+              run: "pnpm build:types"
 
             - name: Install Example Deps
               run: "npm install"
@@ -82,39 +85,50 @@ jobs:
     workflow_lint:
         name: "Workflow Lint"
         runs-on: ubuntu-24.04
+        permissions:
+            security-events: write
         steps:
-            - uses: actions/checkout@1af3b93b6815bc44a9784bd300feb67ff0d1eeb3 # v6
-
-            - uses: actions/setup-node@2028fbc5c25fe9cf00d9f06a71cc4710d4507903 # v6
+            - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
               with:
-                  cache: "yarn"
+                  persist-credentials: false
+
+            - uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6
+            - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
+              with:
+                  cache: "pnpm"
                   node-version-file: package.json
 
             - name: Install Deps
-              run: "yarn install --frozen-lockfile"
+              run: "pnpm install --frozen-lockfile"
 
             - name: Run Linter
-              run: "yarn lint:workflows"
+              run: "pnpm lint:workflows"
+
+            - name: Run zizmor
+              uses: zizmorcore/zizmor-action@192e21d79ab29983730a13d1382995c2307fbcaa # v0.5.7
 
     docs:
         name: "JSDoc Checker"
         runs-on: ubuntu-24.04
         steps:
-            - uses: actions/checkout@1af3b93b6815bc44a9784bd300feb67ff0d1eeb3 # v6
-
-            - uses: actions/setup-node@2028fbc5c25fe9cf00d9f06a71cc4710d4507903 # v6
+            - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
               with:
-                  cache: "yarn"
+                  persist-credentials: false
+
+            - uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6
+            - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
+              with:
+                  cache: "pnpm"
                   node-version-file: package.json
 
             - name: Install Deps
-              run: "yarn install"
+              run: "pnpm install"
 
             - name: Generate Docs
-              run: "yarn run gendoc --treatWarningsAsErrors --suppressCommentWarningsInDeclarationFiles"
+              run: "pnpm run gendoc --treatWarningsAsErrors --suppressCommentWarningsInDeclarationFiles"
 
             - name: Upload Artifact
-              uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
+              uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
               with:
                   name: docs
                   path: _docs
@@ -125,31 +139,36 @@ jobs:
         name: "Analyse Dead Code"
         runs-on: ubuntu-24.04
         steps:
-            - uses: actions/checkout@1af3b93b6815bc44a9784bd300feb67ff0d1eeb3 # v6
-
-            - uses: actions/setup-node@2028fbc5c25fe9cf00d9f06a71cc4710d4507903 # v6
+            - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
               with:
-                  cache: "yarn"
+                  persist-credentials: false
+
+            - uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6
+            - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
+              with:
+                  cache: "pnpm"
                   node-version-file: package.json
 
             - name: Install Deps
-              run: "yarn install --frozen-lockfile"
+              run: "pnpm install --frozen-lockfile"
 
             - name: Run linter
-              run: "yarn run lint:knip"
+              run: "pnpm run lint:knip"
 
     element-web:
         name: Downstream tsc element-web
         if: github.event_name == 'merge_group'
         runs-on: ubuntu-24.04
         steps:
-            - uses: actions/checkout@1af3b93b6815bc44a9784bd300feb67ff0d1eeb3 # v6
+            - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
               with:
                   repository: element-hq/element-web
+                  persist-credentials: false
 
-            - uses: actions/setup-node@2028fbc5c25fe9cf00d9f06a71cc4710d4507903 # v6
+            - uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6
+            - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
               with:
-                  cache: "yarn"
+                  cache: "pnpm"
                   node-version: "lts/*"
 
             - name: Install Dependencies
@@ -159,15 +178,22 @@ jobs:
                   JS_SDK_GITHUB_BASE_REF: ${{ github.sha }}
 
             - name: Typecheck
-              run: "yarn run lint:types"
+              working-directory: apps/web
+              run: "pnpm run lint:types"
 
-    # Hook for branch protection to skip downstream typechecking outside of merge queues
-    downstream:
-        name: Downstream Typescript Syntax Check
+    # Workflow consolidation job
+    done:
+        needs:
+            - ts_lint
+            - js_lint
+            - node_example_lint
+            - workflow_lint
+            - docs
+            - analyse_dead_code
+            - element-web
+        name: Static Analysis
         runs-on: ubuntu-24.04
         if: always()
-        needs:
-            - element-web
         steps:
-            - if: needs.element-web.result != 'skipped' && needs.element-web.result != 'success'
+            - if: contains(needs.*.result , 'failure') || contains(needs.*.result, 'cancelled')
               run: exit 1

@@ -17,7 +17,7 @@ limitations under the License.
 import * as RustSdkCryptoJs from "@matrix-org/matrix-sdk-crypto-wasm";
 import { StoreHandle } from "@matrix-org/matrix-sdk-crypto-wasm";
 
-import { RustCrypto } from "./rust-crypto.ts";
+import { MAX_INVITE_ACCEPTANCE_MS_FOR_KEY_BUNDLE, RustCrypto } from "./rust-crypto.ts";
 import { type IHttpOpts, type MatrixHttpApi } from "../http-api/index.ts";
 import { type ServerSideSecretStorage } from "../secret-storage.ts";
 import { type Logger } from "../logger.ts";
@@ -185,23 +185,23 @@ async function initOlmMachine(
         enableEncryptedStateEvents,
     );
 
-    await olmMachine.registerRoomKeyUpdatedCallback((sessions: RustSdkCryptoJs.RoomKeyInfo[]) =>
+    olmMachine.registerRoomKeyUpdatedCallback((sessions: RustSdkCryptoJs.RoomKeyInfo[]) =>
         rustCrypto.onRoomKeysUpdated(sessions),
     );
-    await olmMachine.registerRoomKeysWithheldCallback((withheld: RustSdkCryptoJs.RoomKeyWithheldInfo[]) =>
+    olmMachine.registerRoomKeysWithheldCallback((withheld: RustSdkCryptoJs.RoomKeyWithheldInfo[]) =>
         rustCrypto.onRoomKeysWithheld(withheld),
     );
-    await olmMachine.registerUserIdentityUpdatedCallback((userId: RustSdkCryptoJs.UserId) =>
+    olmMachine.registerUserIdentityUpdatedCallback((userId: RustSdkCryptoJs.UserId) =>
         rustCrypto.onUserIdentityUpdated(userId),
     );
-    await olmMachine.registerDevicesUpdatedCallback((userIds: string[]) => rustCrypto.onDevicesUpdated(userIds));
+    olmMachine.registerDevicesUpdatedCallback((userIds: string[]) => rustCrypto.onDevicesUpdated(userIds));
 
     // Check if there are any key backup secrets pending processing. There may be multiple secrets to process if several devices have gossiped them.
     // The `registerReceiveSecretCallback` function will only be triggered for new secrets. If the client is restarted before processing them, the secrets will need to be manually handled.
-    rustCrypto.checkSecrets("m.megolm_backup.v1");
+    void rustCrypto.checkSecrets("m.megolm_backup.v1");
 
     // Register a callback to be notified when a new secret is received, as for now only the key backup secret is supported (the cross signing secrets are handled automatically by the OlmMachine)
-    await olmMachine.registerReceiveSecretCallback((name: string, _value: string) =>
+    olmMachine.registerReceiveSecretCallback((name: string, _value: string) =>
         // Instead of directly checking the secret value, we poll the inbox to get all values for that secret type.
         // Once we have all the values, we can safely clear the secret inbox.
         rustCrypto.checkSecrets(name),
@@ -244,6 +244,22 @@ async function initOlmMachine(
             await migrateLegacyLocalTrustIfNeeded({ legacyCryptoStore, rustCrypto, logger });
 
             await legacyCryptoStore.setMigrationState(MigrationState.INITIAL_OWN_KEY_QUERY_DONE);
+        }
+    }
+
+    // If we have any recently-joined rooms, see if we have a pending key bundle for them.
+    for (const pendingDetails of await olmMachine.getAllRoomsPendingKeyBundles()) {
+        const roomId = pendingDetails.roomId.toString();
+        if (Date.now() - pendingDetails.inviteAcceptedAtMillis <= MAX_INVITE_ACCEPTANCE_MS_FOR_KEY_BUNDLE) {
+            logger.info(
+                `Checking for pending key bundle for recently-joined room ${roomId} (joined ${new Date(pendingDetails.inviteAcceptedAtMillis).toISOString()})`,
+            );
+            await rustCrypto.maybeAcceptKeyBundle(roomId, pendingDetails.inviterId.toString());
+        } else {
+            logger.info(
+                `Clearing pending-key-bundle flag for room ${roomId} (too old: joined ${new Date(pendingDetails.inviteAcceptedAtMillis).toISOString()})`,
+            );
+            await olmMachine.clearRoomPendingKeyBundle(new RustSdkCryptoJs.RoomId(roomId));
         }
     }
 

@@ -94,16 +94,23 @@ export class RoomMember extends TypedEventEmitter<RoomMemberEvent, RoomMemberEve
      * True if the room member is currently typing.
      */
     public typing = false;
+
     /**
-     * The human-readable name for this room member. This will be
+     * The human-readable name for this room member. Similar to {@link rawDisplayName}, but
      * disambiguated with a suffix of " (\@user_id:matrix.org)" if another member shares the
      * same displayname.
      */
     public name: string;
+
     /**
-     * The ambiguous displayname of this room member.
+     * The ambiguous displayname of this room member, with some preprocessing:
+     *
+     *  * Direction override characters (RTO and LRO) are removed.
+     *  * If the displayname is empty, or contains only blank, non-printing, or diacritcic characters, it is
+     *    replaced with the user ID.
      */
     public rawDisplayName: string;
+
     /**
      * The power level for this room member.
      */
@@ -218,6 +225,42 @@ export class RoomMember extends TypedEventEmitter<RoomMemberEvent, RoomMemberEve
             this.updateModifiedTime();
             this.emit(RoomMemberEvent.Name, event, this, oldName);
         }
+    }
+
+    /**
+     * Recalculate the disambiguation flag for this member based on current room state.
+     * This should be called when another member's display name changes and may affect
+     * whether this member needs disambiguation.
+     *
+     * @param roomState - The current room state to use for disambiguation check
+     * @returns true if the member's name changed as a result of the disambiguation update
+     *
+     * @remarks
+     * Fires {@link RoomMemberEvent.Name}
+     */
+    public recalculateDisambiguatedName(roomState: RoomState): boolean {
+        if (!this.events.member) {
+            return false;
+        }
+
+        const displayName = this.events.member.getDirectionalContent().displayname ?? "";
+        const newDisambiguate = shouldDisambiguate(this.userId, displayName, roomState);
+
+        if (newDisambiguate === this.disambiguate) {
+            return false;
+        }
+
+        this.disambiguate = newDisambiguate;
+        const oldName = this.name;
+        this.name = calculateDisplayName(this.userId, displayName, this.disambiguate);
+
+        if (oldName !== this.name) {
+            this.updateModifiedTime();
+            this.emit(RoomMemberEvent.Name, this.events.member, this, oldName);
+            return true;
+        }
+
+        return false;
     }
 
     /**

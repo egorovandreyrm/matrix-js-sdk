@@ -20,7 +20,6 @@ limitations under the License.
 
 import unhomoglyph from "unhomoglyph";
 import promiseRetry from "p-retry";
-import { type Optional } from "matrix-events-sdk";
 
 import { type IEvent, type MatrixEvent } from "./models/event.ts";
 import { M_TIMESTAMP } from "./@types/location.ts";
@@ -115,7 +114,7 @@ export function decodeParams(query: string): Record<string, string | string[]> {
  * variables with. E.g. `{ "$bar": "baz" }`.
  * @returns The result of replacing all template variables e.g. '/foo/baz'.
  */
-export function encodeUri(pathTemplate: string, variables: Record<string, Optional<string>>): string {
+export function encodeUri(pathTemplate: string, variables: Record<string, string | null | undefined>): string {
     for (const key in variables) {
         if (!variables.hasOwnProperty(key)) {
             continue;
@@ -227,12 +226,21 @@ export function deepCompare(x: any, y: any): boolean {
     }
 
     // everything else is either an unequal primitive, or an object
-    if (!(x instanceof Object)) {
+    // XXX: this check has been temporarily tweaked due to issues in the jest test environment,
+    // this will be reverted as part of the migration to vitest
+    if (
+        x.constructor.name !== "Object" &&
+        x.constructor.name !== "RegExp" &&
+        x.constructor.name !== "Date" &&
+        x.constructor.name !== "Array"
+    ) {
         return false;
     }
 
     // check they are the same type of object
-    if (x.constructor !== y.constructor || x.prototype !== y.prototype) {
+    // XXX: this check has been temporarily tweaked due to issues in the jest test environment,
+    // this will be reverted as part of the migration to vitest
+    if (x.prototype !== y.prototype) {
         return false;
     }
 

@@ -1,5 +1,5 @@
 /*
-Copyright 2025 The Matrix.org Foundation C.I.C.
+Copyright 2025-2026 The Matrix.org Foundation C.I.C.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -22,19 +22,9 @@ import type { MatrixClient } from "../client.ts";
 import { ConnectionError, HTTPError, MatrixError } from "../http-api/errors.ts";
 import { type Logger, logger as rootLogger } from "../logger.ts";
 import { type Room } from "../models/room.ts";
-import {
-    type CallMembership,
-    DEFAULT_EXPIRE_DURATION,
-    type RtcMembershipData,
-    type SessionMembershipData,
-} from "./CallMembership.ts";
-import { type Transport, isMyMembership, type RTCCallIntent, Status } from "./types.ts";
-import {
-    type SlotDescription,
-    type MembershipConfig,
-    type SessionConfig,
-    slotDescriptionToId,
-} from "./MatrixRTCSession.ts";
+import { type CallMembership, DEFAULT_EXPIRE_DURATION } from "./CallMembership.ts";
+import { type Transport, isMyMembership, type RTCCallIntent, Status, type SlotDescription } from "./types.ts";
+import { type MembershipConfig, type SessionConfig } from "./MatrixRTCSession.ts";
 import { ActionScheduler, type ActionUpdate } from "./MembershipManagerActionScheduler.ts";
 import { TypedEventEmitter } from "../models/typed-event-emitter.ts";
 import { UnsupportedDelayedEventsEndpointError } from "../errors.ts";
@@ -43,6 +33,9 @@ import {
     type IMembershipManager,
     type MembershipManagerEventHandlerMap,
 } from "./IMembershipManager.ts";
+import { type RtcMembershipData, type SessionMembershipData } from "./membershipData/index.ts";
+import { computeSlotId } from "./utils.ts";
+import { isLivekitTransportConfig } from "./LivekitTransport.ts";
 
 /* MembershipActionTypes:
 On Join:  ───────────────┐   ┌───────────────(1)───────────┐
@@ -214,6 +207,8 @@ export class MembershipManager
      * transport selection will be used instead.
      * @param onError This will be called once the membership manager encounters an unrecoverable error.
      * This should bubble up the the frontend to communicate that the call does not work in the current environment.
+     * The original underlying error is preserved as `error.cause`, so consumers can `instanceof`-check the typed
+     * cause.
      */
     public join(fociPreferred: Transport[], multiSfuFocus?: Transport, onError?: (error: unknown) => void): void {
         if (this.scheduler.running) {
@@ -276,13 +271,8 @@ export class MembershipManager
         if (!this.isActivated()) {
             return Promise.resolve();
         }
-        const userId = this.client.getUserId();
-        const deviceId = this.client.getDeviceId();
-        if (!userId || !deviceId) {
-            this.logger.error("MembershipManager.onRTCSessionMemberUpdate called without user or device id");
-            return Promise.resolve();
-        }
-        this._ownMembership = memberships.find((m) => isMyMembership(m, userId, deviceId));
+
+        this._ownMembership = memberships.find((m) => isMyMembership(m, this.userId, this.deviceId));
 
         if (!this._ownMembership) {
             // If one of these actions are scheduled or are getting inserted in the next iteration, we should already
@@ -338,9 +328,10 @@ export class MembershipManager
         if (userId === null) throw Error("Missing userId in client");
         if (deviceId === null) throw Error("Missing deviceId in client");
         this.deviceId = deviceId;
+        this.userId = userId;
         // this needs to become a uuid so that consecutive join/leaves result in a key rotation.
         // we keep it as a string for now for backwards compatibility.
-        this.memberId = this.makeMembershipStateKey(userId, deviceId);
+        this.stateKey = this.makeMembershipStateKey(userId, deviceId);
         this.state = MembershipManager.defaultState;
         this.callIntent = joinConfig?.callIntent;
         this.scheduler = new ActionScheduler((type): Promise<ActionUpdate> => {
@@ -386,7 +377,8 @@ export class MembershipManager
     }
     // Membership Event static parameters:
     protected deviceId: string;
-    protected memberId: string;
+    protected userId: string;
+    protected stateKey: string;
     protected rtcTransport?: Transport;
     /** @deprecated This will be removed in favor or rtcTransport becoming a list of actively used transports */
     private fociPreferred?: Transport[];
@@ -487,7 +479,7 @@ export class MembershipManager
             { delay: this.delayedLeaveEventDelayMs },
             EventType.GroupCallMemberPrefix,
             {},
-            this.memberId,
+            this.stateKey,
         );
 
     // HANDLERS (used in the membershipLoopHandler)
@@ -502,7 +494,7 @@ export class MembershipManager
                 this.setAndEmitProbablyLeft(false);
                 // On success we reset retries and set delayId.
                 this.resetRateLimitCounter(MembershipActionType.SendDelayedEvent);
-                this.state.delayId = response.delay_id;
+                this.setAndEmitDelayId(response.delay_id);
                 if (this.state.hasMemberStateEvent) {
                     // This action was scheduled because the previous delayed event was cancelled
                     // due to lack of https://github.com/element-hq/synapse/pull/17810
@@ -549,7 +541,7 @@ export class MembershipManager
         return await this.client
             ._unstable_cancelScheduledDelayedEvent(delayId)
             .then(() => {
-                this.state.delayId = undefined;
+                this.setAndEmitDelayId(undefined);
                 this.resetRateLimitCounter(MembershipActionType.SendDelayedEvent);
                 return createReplaceActionUpdate(MembershipActionType.SendDelayedEvent);
             })
@@ -561,7 +553,7 @@ export class MembershipManager
                 if (this.isNotFoundError(e)) {
                     // If we get a M_NOT_FOUND we know that the delayed event got already removed.
                     // This means we are good and can set it to undefined and run this again.
-                    this.state.delayId = undefined;
+                    this.setAndEmitDelayId(undefined);
                     return createReplaceActionUpdate(repeatActionType);
                 }
                 if (this.isUnsupportedDelayedEndpoint(e)) {
@@ -585,6 +577,13 @@ export class MembershipManager
         }
         this.state.probablyLeft = probablyLeft;
         this.emit(MembershipManagerEvent.ProbablyLeft, this.state.probablyLeft);
+    }
+
+    private setAndEmitDelayId(delayId: string | undefined): void {
+        if (this.state.delayId === delayId) return;
+
+        this.state.delayId = delayId;
+        this.emit(MembershipManagerEvent.DelayIdChanged, this.state.delayId);
     }
 
     private async restartDelayedEvent(delayId: string): Promise<ActionUpdate> {
@@ -630,7 +629,7 @@ export class MembershipManager
                 }
                 const repeatActionType = MembershipActionType.RestartDelayedEvent;
                 if (this.isNotFoundError(e)) {
-                    this.state.delayId = undefined;
+                    this.setAndEmitDelayId(undefined);
                     return createInsertActionUpdate(MembershipActionType.SendDelayedEvent);
                 }
                 // If the HS does not support delayed events we wont reschedule.
@@ -650,6 +649,7 @@ export class MembershipManager
             ._unstable_sendScheduledDelayedEvent(delayId)
             .then(() => {
                 this.state.hasMemberStateEvent = false;
+                this.setAndEmitDelayId(undefined);
                 this.resetRateLimitCounter(MembershipActionType.SendScheduledDelayedLeaveEvent);
 
                 return { replace: [] };
@@ -658,7 +658,7 @@ export class MembershipManager
                 const repeatActionType = MembershipActionType.SendLeaveEvent;
                 if (this.isUnsupportedDelayedEndpoint(e)) return {};
                 if (this.isNotFoundError(e)) {
-                    this.state.delayId = undefined;
+                    this.setAndEmitDelayId(undefined);
                     return createInsertActionUpdate(repeatActionType);
                 }
                 const update = this.actionUpdateFromErrors(e, repeatActionType, "sendScheduledDelayedEvent");
@@ -680,7 +680,7 @@ export class MembershipManager
             this.room.roomId,
             EventType.GroupCallMemberPrefix,
             myMembership as EmptyObject | SessionMembershipData,
-            this.memberId,
+            this.stateKey,
         );
     };
 
@@ -763,8 +763,17 @@ export class MembershipManager
     }
 
     // HELPERS
+    /**
+     * this creates `${localUserId}_${localDeviceId}_${this.slotDescription.application}${this.slotDescription.id}`
+     * which is not compatible with membershipID of session type member events. They have to be `${localUserId}:${localDeviceId}`
+     */
     private makeMembershipStateKey(localUserId: string, localDeviceId: string): string {
-        const stateKey = `${localUserId}_${localDeviceId}_${this.slotDescription.application}${this.slotDescription.id}`;
+        // INFO_SLOT_ID_LEGACY_CASE  (search for all occurances of this INFO to get the full picture)
+        // Revert back to "" just for the state key (state keys are always legacy. we use sticky events for non legacy events)
+        const application = this.slotDescription.application;
+        const needsEmptyStringRoomFix = application === "m.call" && this.slotDescription.id === "ROOM";
+        const slotId = needsEmptyStringRoomFix ? "" : this.slotDescription.id;
+        const stateKey = `${localUserId}_${localDeviceId}_${application}${slotId}`;
         if (/^org\.matrix\.msc(3757|3779)\b/.exec(this.room.getVersion())) {
             return stateKey;
         } else {
@@ -774,11 +783,14 @@ export class MembershipManager
 
     /**
      * Constructs our own membership
+     * @returns Only returns `SessionMembershipData`
      */
     protected makeMyMembership(expires: number): SessionMembershipData | RtcMembershipData {
         const ownMembership = this.ownMembership;
+        const needsEmptyStringRoomFix =
+            this.slotDescription.application === "m.call" && this.slotDescription.id === "ROOM";
 
-        const focusObjects =
+        const focusObjects: Pick<SessionMembershipData, "foci_preferred" | "focus_active"> =
             this.rtcTransport === undefined
                 ? {
                       focus_active: { type: "livekit", focus_selection: "oldest_membership" } as const,
@@ -790,9 +802,15 @@ export class MembershipManager
                   };
         return {
             "application": this.slotDescription.application,
-            "call_id": this.slotDescription.id,
+            // INFO_SLOT_ID_LEGACY_CASE  (search for all occurances of this INFO to get the full picture)
+            // Revert back to "" just for the sending the event.
+            "call_id": needsEmptyStringRoomFix ? "" : this.slotDescription.id,
             "scope": "m.room",
             "device_id": this.deviceId,
+            // DO NOT use this.memberId here since that is the state key (using application...)
+            // But for session events we use the colon seperated userId and deviceId. The SFU will automatically
+            // assign those values to the media participant for those versions.
+            "membershipID": `${this.userId}:${this.deviceId}`,
             expires,
             "m.call.intent": this.callIntent,
             ...focusObjects,
@@ -1022,6 +1040,9 @@ export class MembershipManager
     public get probablyLeft(): boolean {
         return this.state.probablyLeft;
     }
+    public get delayId(): string | undefined {
+        return this.state.delayId;
+    }
 }
 
 /**
@@ -1035,6 +1056,9 @@ export class StickyEventMembershipManager extends MembershipManager {
         private readonly clientWithSticky: MembershipManagerClient &
             Pick<MatrixClient, "_unstable_sendStickyEvent" | "_unstable_sendStickyDelayedEvent">,
         sessionDescription: SlotDescription,
+        // this needs to become a uuid so that consecutive join/leaves result in a key rotation.
+        // we keep it as a string for now for backwards compatibility.
+        private readonly memberId: string,
         parentLogger?: Logger,
     ) {
         super(joinConfig, room, clientWithSticky, sessionDescription, parentLogger);
@@ -1070,9 +1094,14 @@ export class StickyEventMembershipManager extends MembershipManager {
         return super.actionUpdateFromErrors(e, t, StickyEventMembershipManager.nameMap.get(m) ?? "unknown");
     }
 
-    protected makeMyMembership(expires: number): SessionMembershipData | RtcMembershipData {
+    /**
+     *
+     * @returns Only returns `RtcMembershipData`
+     */
+    protected makeMyMembership(): RtcMembershipData {
         const ownMembership = this.ownMembership;
 
+        const livekitTransport = isLivekitTransportConfig(this.rtcTransport) ? this.rtcTransport : undefined;
         const relationObject = ownMembership?.eventId
             ? { "m.relation": { rel_type: RelationType.Reference, event_id: ownMembership?.eventId } }
             : {};
@@ -1081,9 +1110,13 @@ export class StickyEventMembershipManager extends MembershipManager {
                 type: this.slotDescription.application,
                 ...(this.callIntent ? { "m.call.intent": this.callIntent } : {}),
             },
-            slot_id: slotDescriptionToId(this.slotDescription),
-            rtc_transports: this.rtcTransport ? [this.rtcTransport] : [],
-            member: { device_id: this.deviceId, user_id: this.client.getUserId()!, id: this.memberId },
+            slot_id: computeSlotId(this.slotDescription),
+            // Make sure we do not add the alias to the transport.
+            // It is not needed in matrix2.0. The additional session information will be used to find the right alias on the sfu.
+            rtc_transports: livekitTransport
+                ? [{ type: livekitTransport.type, livekit_service_url: livekitTransport.livekit_service_url }]
+                : [],
+            member: { device_id: this.deviceId, user_id: this.userId, id: this.memberId },
             versions: [],
             ...relationObject,
         };

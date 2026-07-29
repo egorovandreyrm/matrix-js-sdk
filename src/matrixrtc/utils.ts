@@ -1,5 +1,5 @@
 /*
-Copyright 2025 The Matrix.org Foundation C.I.C.
+Copyright 2025-2026 The Matrix.org Foundation C.I.C.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -14,14 +14,15 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-import type { InboundEncryptionSession, ParticipantId } from "./types.ts";
+import { getEncryptionKeyMapKey, type CallMembershipIdentityParts } from "./EncryptionManager.ts";
+import type { InboundEncryptionSession, EncryptionKeyMapKey, SlotDescription } from "./types.ts";
 
 /**
  * Detects when a key for a given index is outdated.
  */
 export class OutdatedKeyFilter {
     // Map of participantId -> keyIndex -> timestamp
-    private tsBuffer: Map<ParticipantId, Map<number, number>> = new Map();
+    private tsBuffer: Map<EncryptionKeyMapKey, Map<number, number>> = new Map();
 
     public constructor() {}
 
@@ -31,21 +32,40 @@ export class OutdatedKeyFilter {
      * @param participantId
      * @param item
      */
-    public isOutdated(participantId: ParticipantId, item: InboundEncryptionSession): boolean {
-        if (!this.tsBuffer.has(participantId)) {
-            this.tsBuffer.set(participantId, new Map<number, number>());
+    public isOutdated(membership: CallMembershipIdentityParts, item: InboundEncryptionSession): boolean {
+        const mapKey = getEncryptionKeyMapKey(membership);
+        if (!this.tsBuffer.has(mapKey)) {
+            this.tsBuffer.set(mapKey, new Map<number, number>());
         }
 
-        const latestTimestamp = this.tsBuffer.get(participantId)?.get(item.keyIndex);
+        const latestTimestamp = this.tsBuffer.get(mapKey)?.get(item.keyIndex);
         if (latestTimestamp && latestTimestamp > item.creationTS) {
             // The existing key is more recent, ignore this one
             return true;
         }
-        this.tsBuffer.get(participantId)!.set(item.keyIndex, item.creationTS);
+        this.tsBuffer.get(mapKey)!.set(item.keyIndex, item.creationTS);
         return false;
     }
 }
 
-export function getParticipantId(userId: string, deviceId: string): ParticipantId {
-    return `${userId}:${deviceId}`;
+/**
+ * Converts a slot ID into it's component application and ID portions.
+ * @param slotId e.g. `m.call#call_id`
+ * @throws If the format of `slotId` is invalid.
+ */
+export function slotIdToDescription(slotId: string): SlotDescription {
+    const [application, id, ...unexpectedAdditionalValues] = slotId.split("#");
+    if (unexpectedAdditionalValues.length) {
+        throw Error(
+            "MatrixRTC Slot IDs *must* only contain two components seperated by one '#'. Additional '#' characters detected.",
+        );
+    }
+    return { application, id };
+}
+
+/**
+ * Converts a SlotDescription into it's slot ID format.
+ */
+export function computeSlotId(slotDescription: SlotDescription): string {
+    return `${slotDescription.application}#${slotDescription.id}`;
 }

@@ -12,20 +12,25 @@ on:
                 description: List of dependencies to reset.
                 type: string
                 required: false
+            dir:
+                description: The directory to release
+                type: string
+                default: "."
 concurrency: ${{ github.workflow }}
 permissions: {} # Uses ELEMENT_BOT_TOKEN
 jobs:
     merge:
         runs-on: ubuntu-24.04
         steps:
-            - uses: actions/checkout@1af3b93b6815bc44a9784bd300feb67ff0d1eeb3 # v6
+            - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
               with:
                   # We will be pushing to this branch and want the CI to run after we do so we cannot use the GITHUB_TOKEN
                   token: ${{ secrets.ELEMENT_BOT_TOKEN }}
                   fetch-depth: 0
+                  persist-credentials: true
 
             - name: Get actions scripts
-              uses: actions/checkout@1af3b93b6815bc44a9784bd300feb67ff0d1eeb3 # v6
+              uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
               with:
                   repository: matrix-org/matrix-js-sdk
                   persist-credentials: false
@@ -33,13 +38,14 @@ jobs:
                   sparse-checkout: |
                       scripts/release
 
-            - uses: actions/setup-node@2028fbc5c25fe9cf00d9f06a71cc4710d4507903 # v6
+            - uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6
+            - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
               with:
-                  cache: "yarn"
+                  cache: "pnpm"
                   node-version-file: package.json
 
             - name: Install Deps
-              run: "yarn install --frozen-lockfile"
+              run: "pnpm install --frozen-lockfile --ignore-scripts"
 
             - name: Set up git
               run: |
@@ -47,12 +53,11 @@ jobs:
                   git config --global user.name "RiotRobot"
 
             - name: Merge to develop
-              run: |
-                  git checkout develop
-                  git merge -X ours master
+              run: .action-repo/scripts/release/merge-master-to-develop.sh
 
             - name: Reset dependencies
               if: inputs.dependencies
+              working-directory: ${{ inputs.dir }}
               run: |
                   while IFS= read -r PACKAGE; do
                       [ -z "$PACKAGE" ] && continue
@@ -73,7 +78,7 @@ jobs:
                       fi
 
                       echo "Resetting $PACKAGE to develop branch..."
-                      yarn add "github:matrix-org/$PACKAGE#develop"
+                      pnpm add "github:matrix-org/$PACKAGE#develop"
                       git add -u
                       git commit -m "Reset $PACKAGE back to develop branch"
                   done <<< "$DEPENDENCIES"

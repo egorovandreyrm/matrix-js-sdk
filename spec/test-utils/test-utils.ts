@@ -13,6 +13,7 @@ import {
 import {
     ClientEvent,
     EventType,
+    HistoryVisibility,
     type IJoinedRoom,
     type IPusher,
     type ISyncResponse,
@@ -57,14 +58,19 @@ export function syncPromise(client: MatrixClient, count = 1): Promise<void> {
 }
 
 /**
- * Return a sync response which contains a single room (by default TEST_ROOM_ID), with the members given
- * @param roomMembers
- * @param roomId
+ * Return a sync response which contains a single room (by default `TEST_ROOM_ID`), with the members given
+ * and history visibility set to `shared`.
  *
- * @returns the sync response
+ * @param roomMembers - An array of user IDs representing the members of the room.
+ * @param roomHistoryVisibility - The history visibility setting for the room. Defaults to `shared`.
+ * @param roomId - The ID of the room. Defaults to `TEST_ROOM_ID`.
+ * @param encryptStateEvents - A boolean indicating whether state events should be encrypted. Defaults to `false`.
+ *
+ * @returns The sync response object containing the room data.
  */
 export function getSyncResponse(
     roomMembers: string[],
+    roomHistoryVisibility: HistoryVisibility = HistoryVisibility.Shared,
     roomId = TEST_ROOM_ID,
     encryptStateEvents = false,
 ): ISyncResponse {
@@ -82,7 +88,15 @@ export function getSyncResponse(
                     state_key: "",
                     content: {
                         "algorithm": "m.megolm.v1.aes-sha2",
-                        "io.element.msc3414.encrypt_state_events": encryptStateEvents,
+                        "io.element.msc4362.encrypt_state_events": encryptStateEvents,
+                    },
+                }),
+                mkEventCustom({
+                    sender: roomMembers[0],
+                    type: "m.room.history_visibility",
+                    state_key: "",
+                    content: {
+                        history_visibility: roomHistoryVisibility,
                     },
                 }),
             ],
@@ -136,7 +150,7 @@ export function mock<T>(constr: { new (...args: any[]): T }, name: string): T {
         // eslint-disable-line guard-for-in
         try {
             if (constr.prototype[key] instanceof Function) {
-                result[key] = jest.fn();
+                result[key] = vi.fn();
             }
         } catch {
             // Direct access to some non-function fields of DOM prototypes may
@@ -592,7 +606,7 @@ export async function advanceTimersUntil<T>(promise: Promise<T>): Promise<T> {
     });
 
     while (!resolved) {
-        await jest.advanceTimersByTimeAsync(1);
+        await vi.advanceTimersByTimeAsync(1);
     }
 
     return await promise;
@@ -641,7 +655,7 @@ export function waitFor<T>(
             checkCallback();
 
             while (!finished) {
-                jest.advanceTimersByTime(interval);
+                vi.advanceTimersByTime(interval);
 
                 // Could have timed-out
                 if (finished) break;

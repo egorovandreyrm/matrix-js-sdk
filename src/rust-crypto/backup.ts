@@ -80,13 +80,17 @@ export class RustBackupManager extends TypedEventEmitter<RustBackupCryptoEvents,
     /** whether {@link backupKeysLoop} is currently running */
     private backupKeysLoopRunning = false;
 
+    /** The logger to use */
+    private readonly logger: Logger;
+
     public constructor(
-        private readonly logger: Logger,
+        logger: Logger,
         private readonly olmMachine: OlmMachine,
         private readonly http: MatrixHttpApi<IHttpOpts & { onlyData: true }>,
         private readonly outgoingRequestProcessor: OutgoingRequestProcessor,
     ) {
         super();
+        this.logger = logger.getChild("[RustBackupManager]");
     }
 
     /**
@@ -142,7 +146,8 @@ export class RustBackupManager extends TypedEventEmitter<RustBackupCryptoEvents,
     /**
      * Re-check the key backup and enable/disable it as appropriate.
      *
-     * @param force - whether we should force a re-check even if one has already happened.
+     * @param force - whether we should force a re-check even if one has already happened. If this is
+     *   `false`, and we have already done a check, `null` is returned rather than the actual info on the key backup.
      */
     public checkKeyBackupAndEnable(force: boolean): Promise<KeyBackupCheck | null> {
         if (!force && this.checkedForBackup) {
@@ -161,7 +166,10 @@ export class RustBackupManager extends TypedEventEmitter<RustBackupCryptoEvents,
     /**
      * Handles a backup secret received event and store it if it matches the current backup version.
      *
-     * @param secret - The secret as received from a `m.secret.send` event for secret `m.megolm_backup.v1`.
+     * Also enables key backup upload if it was not previously enabled, and the encryption key matches the received
+     * decryption key.
+     *
+     * @param secret - The secret as received from a `m.secret.send` or `io.element.msc4385.secret.push` event for secret `m.megolm_backup.v1`.
      * @returns true if the secret is valid and has been stored, false otherwise.
      */
     public async handleBackupSecretReceived(secret: string): Promise<boolean> {
@@ -180,28 +188,47 @@ export class RustBackupManager extends TypedEventEmitter<RustBackupCryptoEvents,
             // There is no server-side key backup.
             // This decryption key is useless to us.
             this.logger.warn(
-                "handleBackupSecretReceived: Received a backup decryption key, but there is no trusted server-side key backup",
+                "handleBackupSecretReceived: Received a backup decryption key, but there is no server-side key backup",
             );
             return false;
         }
 
+        let backupDecryptionKey: RustSdkCryptoJs.BackupDecryptionKey;
         try {
-            const backupDecryptionKey = RustSdkCryptoJs.BackupDecryptionKey.fromBase64(secret);
+            backupDecryptionKey = RustSdkCryptoJs.BackupDecryptionKey.fromBase64(secret);
+        } catch (e) {
+            this.logger.warn("handleBackupSecretReceived: Invalid backup decryption key", e);
+            return false;
+        }
+
+        try {
             const privateKeyMatches = this.backupInfoMatchesBackupDecryptionKey(latestBackupInfo, backupDecryptionKey);
             if (!privateKeyMatches) {
                 this.logger.warn(
-                    `handleBackupSecretReceived: Private decryption key does not match the public key of the current remote backup.`,
+                    `handleBackupSecretReceived: Private decryption key does not match the public key of the current server-side backup version (${latestBackupInfo.version})`,
                 );
                 // just ignore the secret
                 return false;
             }
             this.logger.info(
-                `handleBackupSecretReceived: A valid backup decryption key has been received and stored in cache.`,
+                `handleBackupSecretReceived: Valid decryption key for the current server-side backup version (${latestBackupInfo.version}) received`,
             );
             await this.saveBackupDecryptionKey(backupDecryptionKey, latestBackupInfo.version);
+
+            // Check if backup upload should be enabled (e.g. the encryption key matches the decryption key),
+            // and enable it if so.
+            if (this.keyBackupCheckInProgress) {
+                this.logger.debug("handleBackupSecretReceived: waiting for ongoing keybackup check to complete");
+                await this.keyBackupCheckInProgress;
+            }
+            this.logger.debug("handleBackupSecretReceived: checking if we can enable keybackup upload");
+            this.keyBackupCheckInProgress = this.doCheckKeyBackup(latestBackupInfo).finally(() => {
+                this.keyBackupCheckInProgress = null;
+            });
+            await this.keyBackupCheckInProgress;
             return true;
         } catch (e) {
-            this.logger.warn("handleBackupSecretReceived: Invalid backup decryption key", e);
+            this.logger.warn("handleBackupSecretReceived: Unable to validate backup decryption key", e);
         }
 
         return false;
@@ -281,12 +308,17 @@ export class RustBackupManager extends TypedEventEmitter<RustBackupCryptoEvents,
 
     private keyBackupCheckInProgress: Promise<KeyBackupCheck | null> | null = null;
 
-    /** Helper for `checkKeyBackup` */
-    private async doCheckKeyBackup(): Promise<KeyBackupCheck | null> {
+    /** Helper to check the key backup status, and enable/disable it as appropriate
+     *
+     * A KeyBackupInfo can be passed if it was fetched recently, to avoid trying to
+     * re-fetch it from the server.
+     */
+    private async doCheckKeyBackup(backupInfo?: KeyBackupInfo | null | undefined): Promise<KeyBackupCheck | null> {
         this.logger.debug("Checking key backup status...");
-        let backupInfo: KeyBackupInfo | null | undefined;
         try {
-            backupInfo = await this.requestKeyBackupVersion();
+            if (!backupInfo) {
+                backupInfo = await this.requestKeyBackupVersion();
+            }
         } catch (e) {
             this.logger.warn("Error checking for active key backup", e);
             this.serverBackupInfo = undefined;
@@ -632,6 +664,24 @@ export class RustBackupManager extends TypedEventEmitter<RustBackupCryptoEvents,
     }
 
     /**
+     * Download and import the keys for a given room from the current backup version.
+     *
+     * @param roomId - The room in question.
+     */
+    public async downloadLatestRoomKeyBackup(roomId: string): Promise<void> {
+        const { backupVersion, decryptionKey } = await this.olmMachine.getBackupKeys();
+        if (!backupVersion || !decryptionKey) {
+            this.logger.warn(
+                `downloadLatestRoomKeyBackup: Could not download backup (backupVersion=${backupVersion}, hasDecryptionKey=${!!decryptionKey})`,
+            );
+            return;
+        }
+        const sessions = await this.downloadRoomKeyBackup(backupVersion, roomId);
+        const backupDecryptor = this.createBackupDecryptor(decryptionKey);
+        this.importKeyBackup({ rooms: { [roomId]: { sessions } } }, backupVersion, backupDecryptor);
+    }
+
+    /**
      * Call `/room_keys/keys` to download the key backup (room keys) for the given backup version.
      * https://spec.matrix.org/v1.12/client-server-api/#get_matrixclientv3room_keyskeys
      *
@@ -648,6 +698,21 @@ export class RustBackupManager extends TypedEventEmitter<RustBackupCryptoEvents,
                 prefix: ClientPrefix.V3,
             },
         );
+    }
+
+    /**
+     * Call `/room/keys/keys/{roomId}` to download the key backup (room keys) for a given backup version and room ID.
+     * @param backupVersion - The version to download.
+     * @param roomId - The ID of the room.
+     * @returns The key backup response.
+     */
+    private downloadRoomKeyBackup(backupVersion: string, roomId: string): Promise<KeyBackupRoomSessions> {
+        const path = encodeUri("/room_keys/keys/$roomId", {
+            $roomId: roomId,
+        });
+        return this.http.authedRequest<KeyBackupRoomSessions>(Method.Get, path, { version: backupVersion }, undefined, {
+            prefix: ClientPrefix.V3,
+        });
     }
 
     /**

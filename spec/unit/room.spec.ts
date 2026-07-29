@@ -18,8 +18,7 @@ limitations under the License.
  * This is an internal module. See {@link MatrixClient} for the public class.
  */
 
-import { mocked } from "jest-mock";
-import { M_POLL_KIND_DISCLOSED, M_POLL_RESPONSE, M_POLL_START, type Optional, PollStartEvent } from "matrix-events-sdk";
+import { M_POLL_KIND_DISCLOSED, M_POLL_RESPONSE, M_POLL_START, PollStartEvent } from "matrix-events-sdk";
 
 import * as utils from "../test-utils/test-utils";
 import { emitPromise, type IMessageOpts } from "../test-utils/test-utils";
@@ -36,8 +35,9 @@ import {
     type IEvent,
     type IRelationsRequestOpts,
     type IStateEventWithRoomId,
+    type IStickyEvent,
     JoinRule,
-    type MatrixClient,
+    MatrixClient,
     MatrixEvent,
     MatrixEventEvent,
     PendingEventOrdering,
@@ -174,7 +174,7 @@ describe("Room", function () {
      *
      * @param room - Room to add the message to
      * @param timestamp - Timestamp of the message
-     * @return The message event
+     * @returns The message event
      */
     const mkMessageInRoom = async (room: Room, timestamp: number) => {
         const message = mkMessage({ ts: timestamp });
@@ -197,8 +197,8 @@ describe("Room", function () {
 
     const addRoomThreads = (
         room: Room,
-        thread1EventTs: Optional<number>,
-        thread2EventTs: Optional<number>,
+        thread1EventTs?: number,
+        thread2EventTs?: number,
     ): { thread1?: Thread; thread2?: Thread } => {
         const result: { thread1?: Thread; thread2?: Thread } = {};
 
@@ -227,13 +227,13 @@ describe("Room", function () {
         // @ts-ignore
         room.currentState = room.getLiveTimeline().endState = utils.mock(RoomState, "currentState");
 
-        jest.spyOn(logger, "warn");
+        vi.spyOn(logger, "warn");
     });
 
     describe("getCreator", () => {
         it("should return the sender from m.room.create", function () {
             // @ts-ignore - mocked doesn't handle overloads sanely
-            mocked(room.currentState.getStateEvents).mockImplementation(function (type, key) {
+            vi.mocked(room.currentState.getStateEvents).mockImplementation(function (type, key) {
                 if (type === EventType.RoomCreate && key === "") {
                     return utils.mkEvent({
                         event: true,
@@ -253,7 +253,7 @@ describe("Room", function () {
 
         it("should return null if the sender is undefined", function () {
             // @ts-ignore - mocked doesn't handle overloads sanely
-            mocked(room.currentState.getStateEvents).mockImplementation(function (type, key) {
+            vi.mocked(room.currentState.getStateEvents).mockImplementation(function (type, key) {
                 if (type === EventType.RoomCreate && key === "") {
                     return utils.mkEvent({
                         event: true,
@@ -275,7 +275,7 @@ describe("Room", function () {
 
         it("should return the URL from m.room.avatar preferentially", function () {
             // @ts-ignore - mocked doesn't handle overloads sanely
-            mocked(room.currentState.getStateEvents).mockImplementation(function (type, key) {
+            vi.mocked(room.currentState.getStateEvents).mockImplementation(function (type, key) {
                 if (type === EventType.RoomAvatar && key === "") {
                     return utils.mkEvent({
                         event: true,
@@ -302,7 +302,7 @@ describe("Room", function () {
 
         it("should return unauthenticated media URL if useAuthentication is not set", function () {
             // @ts-ignore - mocked doesn't handle overloads sanely
-            mocked(room.currentState.getStateEvents).mockImplementation(function (type, key) {
+            vi.mocked(room.currentState.getStateEvents).mockImplementation(function (type, key) {
                 if (type === EventType.RoomAvatar && key === "") {
                     return utils.mkEvent({
                         event: true,
@@ -323,7 +323,7 @@ describe("Room", function () {
 
         it("should return authenticated media URL if useAuthentication=true", function () {
             // @ts-ignore - mocked doesn't handle overloads sanely
-            mocked(room.currentState.getStateEvents).mockImplementation(function (type, key) {
+            vi.mocked(room.currentState.getStateEvents).mockImplementation(function (type, key) {
                 if (type === EventType.RoomAvatar && key === "") {
                     return utils.mkEvent({
                         event: true,
@@ -345,7 +345,7 @@ describe("Room", function () {
 
     describe("getMember", function () {
         beforeEach(function () {
-            mocked(room.currentState.getMember).mockImplementation(function (userId) {
+            vi.mocked(room.currentState.getMember).mockImplementation(function (userId) {
                 return (
                     {
                         "@alice:bar": {
@@ -465,7 +465,7 @@ describe("Room", function () {
                 membership: KnownMembership.Join,
                 name: "Alice",
             } as unknown as RoomMember;
-            mocked(room.currentState.getSentinelMember).mockImplementation(function (uid) {
+            vi.mocked(room.currentState.getSentinelMember).mockImplementation(function (uid) {
                 if (uid === userA) {
                     return sentinel;
                 }
@@ -492,7 +492,7 @@ describe("Room", function () {
             remoteEvent.event.unsigned = { transaction_id: "TXN_ID" };
             const remoteEventId = remoteEvent.getId();
 
-            const stub = jest.fn();
+            const stub = vi.fn();
             room.on(RoomEvent.LocalEchoUpdated, stub);
 
             // first add the local echo
@@ -672,13 +672,13 @@ describe("Room", function () {
                 membership: KnownMembership.Join,
                 name: "Old Alice",
             } as unknown as RoomMember;
-            mocked(room.currentState.getSentinelMember).mockImplementation(function (uid) {
+            vi.mocked(room.currentState.getSentinelMember).mockImplementation(function (uid) {
                 if (uid === userA) {
                     return sentinel;
                 }
                 return null;
             });
-            mocked(room.oldState.getSentinelMember).mockImplementation(function (uid) {
+            vi.mocked(room.oldState.getSentinelMember).mockImplementation(function (uid) {
                 if (uid === userA) {
                     return oldSentinel;
                 }
@@ -716,13 +716,13 @@ describe("Room", function () {
                 membership: KnownMembership.Join,
                 name: "Old Alice",
             } as unknown as RoomMember;
-            mocked(room.currentState.getSentinelMember).mockImplementation(function (uid) {
+            vi.mocked(room.currentState.getSentinelMember).mockImplementation(function (uid) {
                 if (uid === userA) {
                     return sentinel;
                 }
                 return null;
             });
-            mocked(room.oldState.getSentinelMember).mockImplementation(function (uid) {
+            vi.mocked(room.oldState.getSentinelMember).mockImplementation(function (uid) {
                 if (uid === userA) {
                     return oldSentinel;
                 }
@@ -781,7 +781,9 @@ describe("Room", function () {
         );
     });
 
-    const resetTimelineTests = function (timelineSupport: boolean) {
+    describe.each(["enabled", "disabled"])("resetLiveTimeline with timeline support %s", (enabled) => {
+        const timelineSupport = enabled === "enabled";
+
         let events: MatrixEvent[];
 
         beforeEach(function () {
@@ -812,7 +814,8 @@ describe("Room", function () {
             ];
         });
 
-        it("should copy state from previous timeline", async function () {
+        // XXX: This test was previously not running and it is broken
+        it.skip("should copy state from previous timeline", async function () {
             await room.addLiveEvents([events[0], events[1]], { addToState: false });
             expect(room.getLiveTimeline().getEvents().length).toEqual(2);
             room.resetLiveTimeline("sometoken", "someothertoken");
@@ -882,13 +885,6 @@ describe("Room", function () {
             const tl = room.getTimelineForEvent(events[0].getId()!);
             expect(tl).toBe(timelineSupport ? firstLiveTimeline : null);
         });
-    };
-
-    describe("resetLiveTimeline with timeline support enabled", () => {
-        resetTimelineTests.bind(null, true);
-    });
-    describe("resetLiveTimeline with timeline support disabled", () => {
-        resetTimelineTests.bind(null, false);
     });
 
     describe("compareEventOrdering", function () {
@@ -974,7 +970,7 @@ describe("Room", function () {
 
     describe("getJoinedMembers", function () {
         it("should return members whose membership is 'join'", function () {
-            mocked(room.currentState.getMembers).mockImplementation(function () {
+            vi.mocked(room.currentState.getMembers).mockImplementation(function () {
                 return [
                     { userId: "@alice:bar", membership: KnownMembership.Join } as unknown as RoomMember,
                     { userId: "@bob:bar", membership: KnownMembership.Invite } as unknown as RoomMember,
@@ -987,7 +983,7 @@ describe("Room", function () {
         });
 
         it("should return an empty list if no membership is 'join'", function () {
-            mocked(room.currentState.getMembers).mockImplementation(function () {
+            vi.mocked(room.currentState.getMembers).mockImplementation(function () {
                 return [{ userId: "@bob:bar", membership: KnownMembership.Invite } as unknown as RoomMember];
             });
             const res = room.getJoinedMembers();
@@ -997,7 +993,7 @@ describe("Room", function () {
 
     describe("hasMembershipState", function () {
         it("should return true for a matching userId and membership", function () {
-            mocked(room.currentState.getMember).mockImplementation(function (userId) {
+            vi.mocked(room.currentState.getMember).mockImplementation(function (userId) {
                 return {
                     "@alice:bar": { userId: "@alice:bar", membership: KnownMembership.Join },
                     "@bob:bar": { userId: "@bob:bar", membership: KnownMembership.Invite },
@@ -1007,7 +1003,7 @@ describe("Room", function () {
         });
 
         it("should return false if match membership but no match userId", function () {
-            mocked(room.currentState.getMember).mockImplementation(function (userId) {
+            vi.mocked(room.currentState.getMember).mockImplementation(function (userId) {
                 return {
                     "@alice:bar": { userId: "@alice:bar", membership: KnownMembership.Join },
                 }[userId] as unknown as RoomMember;
@@ -1016,7 +1012,7 @@ describe("Room", function () {
         });
 
         it("should return false if match userId but no match membership", function () {
-            mocked(room.currentState.getMember).mockImplementation(function (userId) {
+            vi.mocked(room.currentState.getMember).mockImplementation(function (userId) {
                 return {
                     "@alice:bar": { userId: "@alice:bar", membership: KnownMembership.Join },
                 }[userId] as unknown as RoomMember;
@@ -1025,7 +1021,7 @@ describe("Room", function () {
         });
 
         it("should return false if no match membership or userId", function () {
-            mocked(room.currentState.getMember).mockImplementation(function (userId) {
+            vi.mocked(room.currentState.getMember).mockImplementation(function (userId) {
                 return {
                     "@alice:bar": { userId: "@alice:bar", membership: KnownMembership.Join },
                 }[userId] as unknown as RoomMember;
@@ -1254,7 +1250,7 @@ describe("Room", function () {
             });
 
             it("emits an update event", function () {
-                const spy = jest.fn();
+                const spy = vi.fn();
                 const summary = {
                     "m.heroes": [],
                     "m.invited_member_count": 1,
@@ -1509,8 +1505,8 @@ describe("Room", function () {
 
                 it("should reset the unread count when our non-synthetic receipt points to the latest event", () => {
                     // Given a room with 2 events, and an unread count set.
-                    room.client.isInitialSyncComplete = jest.fn().mockReturnValue(true);
-                    jest.spyOn(room, "timeline", "get").mockReturnValue([event1, event2]);
+                    room.client.isInitialSyncComplete = vi.fn().mockReturnValue(true);
+                    vi.spyOn(room, "timeline", "get").mockReturnValue([event1, event2]);
                     room.setUnread(NotificationCountType.Total, 45);
                     room.setUnread(NotificationCountType.Highlight, 57);
                     // Sanity check:
@@ -1528,8 +1524,8 @@ describe("Room", function () {
 
                 it("should not reset the unread count when someone else's receipt points to the latest event", () => {
                     // Given a room with 2 events, and an unread count set.
-                    room.client.isInitialSyncComplete = jest.fn().mockReturnValue(true);
-                    jest.spyOn(room, "timeline", "get").mockReturnValue([event1, event2]);
+                    room.client.isInitialSyncComplete = vi.fn().mockReturnValue(true);
+                    vi.spyOn(room, "timeline", "get").mockReturnValue([event1, event2]);
                     room.setUnread(NotificationCountType.Total, 45);
                     room.setUnread(NotificationCountType.Highlight, 57);
                     // Sanity check:
@@ -1547,8 +1543,8 @@ describe("Room", function () {
 
                 it("should not reset the unread count when our non-synthetic receipt points to an earlier event", () => {
                     // Given a room with 2 events, and an unread count set.
-                    room.client.isInitialSyncComplete = jest.fn().mockReturnValue(true);
-                    jest.spyOn(room, "timeline", "get").mockReturnValue([event1, event2]);
+                    room.client.isInitialSyncComplete = vi.fn().mockReturnValue(true);
+                    vi.spyOn(room, "timeline", "get").mockReturnValue([event1, event2]);
                     room.setUnread(NotificationCountType.Total, 45);
                     room.setUnread(NotificationCountType.Highlight, 57);
                     // Sanity check:
@@ -1566,8 +1562,8 @@ describe("Room", function () {
 
                 it("should not reset the unread count when our a synthetic receipt points to the latest event", () => {
                     // Given a room with 2 events, and an unread count set.
-                    room.client.isInitialSyncComplete = jest.fn().mockReturnValue(true);
-                    jest.spyOn(room, "timeline", "get").mockReturnValue([event1, event2]);
+                    room.client.isInitialSyncComplete = vi.fn().mockReturnValue(true);
+                    vi.spyOn(room, "timeline", "get").mockReturnValue([event1, event2]);
                     room.setUnread(NotificationCountType.Total, 45);
                     room.setUnread(NotificationCountType.Highlight, 57);
                     // Sanity check:
@@ -1599,7 +1595,7 @@ describe("Room", function () {
             });
 
             it("should emit an event when a receipt is added", function () {
-                const listener = jest.fn();
+                const listener = vi.fn();
                 room.on(RoomEvent.Receipt, listener);
 
                 const ts = 13787898424;
@@ -1797,7 +1793,7 @@ describe("Room", function () {
                 const ts = 13787898424;
                 room.addLiveEvents([eventToAck], { addToState: false });
                 room.addReceipt(mkReceipt(roomId, [mkRecord(eventToAck.getId()!, "m.read", userB, ts)]));
-                room.findEventById = jest.fn().mockReturnValue({ getThread: jest.fn() } as unknown as MatrixEvent);
+                room.findEventById = vi.fn().mockReturnValue({ getThread: vi.fn() } as unknown as MatrixEvent);
                 expect(room.hasUserReadEvent(userB, eventToAck.getId()!)).toEqual(true);
             });
 
@@ -1835,11 +1831,7 @@ describe("Room", function () {
 
             describe("threads enabled", () => {
                 beforeEach(() => {
-                    jest.spyOn(room.client, "supportsThreads").mockReturnValue(true);
-                });
-
-                afterEach(() => {
-                    jest.restoreAllMocks();
+                    vi.spyOn(room.client, "supportsThreads").mockReturnValue(true);
                 });
 
                 it("returns true if there is an unthreaded receipt for a later event in a thread", async () => {
@@ -1883,7 +1875,7 @@ describe("Room", function () {
             );
 
             it("should emit Room.tags event when new tags are " + "received on the event stream", function () {
-                const listener = jest.fn();
+                const listener = vi.fn();
                 room.on(RoomEvent.Tags, listener);
 
                 const tags = { "m.foo": { order: 0.5 } };
@@ -2033,7 +2025,7 @@ describe("Room", function () {
         });
 
         it("should remove cancelled events from the timeline", function () {
-            const room = new Room(roomId, null!, userA);
+            const room = new Room(roomId, new MatrixClient({ baseUrl: "http://example.org" }), userA);
             const eventA = utils.mkMessage({
                 room: roomId,
                 user: userA,
@@ -2083,7 +2075,7 @@ describe("Room", function () {
                 isRoomEncrypted: function () {
                     return false;
                 },
-                members: jest.fn().mockImplementation(() => {
+                members: vi.fn().mockImplementation(() => {
                     if (serverResponse instanceof Error) {
                         return Promise.reject(serverResponse);
                     } else {
@@ -2105,14 +2097,14 @@ describe("Room", function () {
                         return Promise.resolve();
                     },
                     getSyncToken: () => "sync_token",
-                    getPendingEvents: jest.fn().mockResolvedValue([]),
-                    setPendingEvents: jest.fn().mockResolvedValue(undefined),
+                    getPendingEvents: vi.fn().mockResolvedValue([]),
+                    setPendingEvents: vi.fn().mockResolvedValue(undefined),
                 },
             };
         }
 
         const memberEvent = utils.mkMembership({
-            user: "@user_a:bar",
+            user: userA,
             mship: KnownMembership.Join,
             room: roomId,
             event: true,
@@ -2123,7 +2115,7 @@ describe("Room", function () {
             const client = createClientMock([memberEvent]);
             const room = new Room(roomId, client as any, null!, { lazyLoadMembers: true });
             await room.loadMembersIfNeeded();
-            const memberA = room.getMember("@user_a:bar")!;
+            const memberA = room.getMember(userA)!;
             expect(memberA.name).toEqual("User A");
             const storedMembers = client.store.storedMembers!;
             expect(storedMembers.length).toEqual(1);
@@ -2132,7 +2124,7 @@ describe("Room", function () {
 
         it("should take members from storage if available", async function () {
             const memberEvent2 = utils.mkMembership({
-                user: "@user_a:bar",
+                user: userA,
                 mship: KnownMembership.Join,
                 room: roomId,
                 event: true,
@@ -2143,7 +2135,7 @@ describe("Room", function () {
 
             await room.loadMembersIfNeeded();
 
-            const memberA = room.getMember("@user_a:bar")!;
+            const memberA = room.getMember(userA)!;
             expect(memberA.name).toEqual("User A");
         });
 
@@ -2154,19 +2146,36 @@ describe("Room", function () {
 
             client.members.mockReturnValue({ chunk: [memberEvent] });
             await room.loadMembersIfNeeded();
-            const memberA = room.getMember("@user_a:bar")!;
+            const memberA = room.getMember(userA)!;
             expect(memberA.name).toEqual("User A");
+        });
+
+        it("should emit room name change event if loading members causes the room name to change", async function () {
+            const otherMemberEvent = utils.mkMembership({
+                user: userB,
+                mship: KnownMembership.Join,
+                room: roomId,
+                event: true,
+                name: "User B",
+            });
+
+            const client = createClientMock([memberEvent, otherMemberEvent]);
+            const room = new Room(roomId, client as any, userA, { lazyLoadMembers: true });
+
+            expect(room.name).toEqual("!foo:bar");
+            await room.loadMembersIfNeeded();
+            expect(room.name).toEqual("User B");
         });
     });
 
     describe("getMyMembership", function () {
         it("should return synced membership if membership isn't available yet", function () {
-            const room = new Room(roomId, null!, userA);
+            const room = new Room(roomId, new MatrixClient({ baseUrl: "http://example.org" }), userA);
             room.updateMyMembership(KnownMembership.Invite);
             expect(room.getMyMembership()).toEqual(JoinRule.Invite);
         });
         it("should emit a Room.myMembership event on a change", function () {
-            const room = new Room(roomId, null!, userA);
+            const room = new Room(roomId, new MatrixClient({ baseUrl: "http://example.org" }), userA);
             const events: {
                 membership: string;
                 oldMembership?: string;
@@ -2188,7 +2197,7 @@ describe("Room", function () {
 
     describe("getDMInviter", () => {
         it("should delegate to RoomMember::getDMInviter if available", () => {
-            const room = new Room(roomId, null!, userA);
+            const room = new Room(roomId, new MatrixClient({ baseUrl: "http://example.org" }), userA);
             room.currentState.markOutOfBandMembersStarted();
             room.currentState.setOutOfBandMembers([
                 new MatrixEvent({
@@ -2206,7 +2215,7 @@ describe("Room", function () {
         });
 
         it("should fall back to summary heroes and return the first one", () => {
-            const room = new Room(roomId, null!, userA);
+            const room = new Room(roomId, new MatrixClient({ baseUrl: "http://example.org" }), userA);
             room.updateMyMembership(KnownMembership.Invite);
             room.setSummary({
                 "m.heroes": [userA, userC],
@@ -2218,7 +2227,7 @@ describe("Room", function () {
         });
 
         it("should return undefined if we're not joined or invited to the room", () => {
-            const room = new Room(roomId, null!, userA);
+            const room = new Room(roomId, new MatrixClient({ baseUrl: "http://example.org" }), userA);
             expect(room.getDMInviter()).toBeUndefined();
             room.updateMyMembership(KnownMembership.Leave);
             expect(room.getDMInviter()).toBeUndefined();
@@ -2257,15 +2266,16 @@ describe("Room", function () {
     });
 
     describe("getAvatarFallbackMember", () => {
+        const client = new MatrixClient({ baseUrl: "any" });
         it("should return undefined if the room isn't a 1:1", () => {
-            const room = new Room(roomId, null!, userA);
+            const room = new Room(roomId, client, userA);
             room.currentState.setJoinedMemberCount(2);
             room.currentState.setInvitedMemberCount(1);
             expect(room.getAvatarFallbackMember()).toBeUndefined();
         });
 
         it("should use summary heroes member if 1:1", () => {
-            const room = new Room(roomId, null!, userA);
+            const room = new Room(roomId, client, userA);
             room.currentState.markOutOfBandMembersStarted();
             room.currentState.setOutOfBandMembers([
                 new MatrixEvent({
@@ -2285,9 +2295,9 @@ describe("Room", function () {
             expect(room.getAvatarFallbackMember()?.userId).toBe(userD);
         });
 
-        it("should return undefined if the room is a 1:1 plus functional member", async function () {
-            const room = new Room(roomId, null!, userA);
-            await room.currentState.setStateEvents([
+        it("should return undefined if the room is a 1:1 plus functional member", function () {
+            const room = new Room(roomId, client, userA);
+            room.currentState.setStateEvents([
                 utils.mkMembership({
                     user: userA,
                     mship: "join",
@@ -2315,9 +2325,9 @@ describe("Room", function () {
             expect(room.getAvatarFallbackMember()).toBeUndefined();
         });
 
-        it("should pick nonfunctional member from summary heroes if room is a 1:1 plus functional member", async function () {
-            const room = new Room(roomId, null!, userA);
-            await room.currentState.setStateEvents([
+        it("should pick nonfunctional member from summary heroes if room is a 1:1 plus functional member", function () {
+            const room = new Room(roomId, client, userA);
+            room.currentState.setStateEvents([
                 utils.mkMembership({
                     user: userA,
                     mship: "join",
@@ -2938,7 +2948,7 @@ describe("Room", function () {
 
             await room.addLiveEvents([threadRoot], { addToState: false });
 
-            const onEvent = jest.fn();
+            const onEvent = vi.fn();
             room.on(RoomEvent.Timeline, onEvent);
 
             await room.addLiveEvents([threadResponse1], { addToState: false });
@@ -3052,7 +3062,7 @@ describe("Room", function () {
                     },
                 });
 
-            room.client.fetchRelations = jest.fn().mockResolvedValue({
+            room.client.fetchRelations = vi.fn().mockResolvedValue({
                 chunk: [threadResponse2Reaction.event, threadResponse2.event, threadResponse1.event],
             });
 
@@ -3436,7 +3446,7 @@ describe("Room", function () {
         describe("invalid receipts", () => {
             beforeEach(() => {
                 // Clear the spies on logger.warn
-                jest.clearAllMocks();
+                vi.clearAllMocks();
             });
 
             it("ignores receipts pointing at missing events", () => {
@@ -3445,7 +3455,7 @@ describe("Room", function () {
                     return { eventId: "missingEventId" } as WrappedReceipt;
                 };
                 // But the event ID it contains does not refer to an event we have
-                room.findEventById = jest.fn().mockReturnValue(null);
+                room.findEventById = vi.fn().mockReturnValue(null);
 
                 // When we ask what they have read
                 // Then we say "nothing"
@@ -3458,7 +3468,7 @@ describe("Room", function () {
                     return { eventId: "wrongThreadEventId", data: { ts: 0, thread_id: "thread1" } } as WrappedReceipt;
                 };
                 // But the event it refers to is in a thread
-                room.findEventById = jest.fn().mockReturnValue({ threadRootId: "thread2" } as MatrixEvent);
+                room.findEventById = vi.fn().mockReturnValue({ threadRootId: "thread2" } as MatrixEvent);
 
                 // When we ask what they have read
                 // Then we say "nothing"
@@ -3475,7 +3485,7 @@ describe("Room", function () {
                     return { eventId: "inThreadEventId" } as WrappedReceipt;
                 };
                 // And the event it refers to is in a thread
-                room.findEventById = jest.fn().mockReturnValue({ threadRootId: "thread2" } as MatrixEvent);
+                room.findEventById = vi.fn().mockReturnValue({ threadRootId: "thread2" } as MatrixEvent);
 
                 // When we ask what they have read
                 // Then we say the event
@@ -3488,7 +3498,7 @@ describe("Room", function () {
                     return { eventId: "mainThreadEventId", data: { ts: 12, thread_id: "main" } } as WrappedReceipt;
                 };
                 // And the event it refers to is in a thread
-                room.findEventById = jest.fn().mockReturnValue({ threadRootId: undefined } as MatrixEvent);
+                room.findEventById = vi.fn().mockReturnValue({ threadRootId: undefined } as MatrixEvent);
 
                 // When we ask what they have read
                 // Then we say the event
@@ -3501,7 +3511,7 @@ describe("Room", function () {
                     return { eventId: "rootId", data: { ts: 12, thread_id: "main" } } as WrappedReceipt;
                 };
                 // And the event it refers to is in a thread, because it is a thread root
-                room.findEventById = jest
+                room.findEventById = vi
                     .fn()
                     .mockReturnValue({ isThreadRoot: true, threadRootId: "thread1" } as MatrixEvent);
 
@@ -3514,7 +3524,7 @@ describe("Room", function () {
         describe("valid receipts", () => {
             beforeEach(() => {
                 // When we look up the event referred to by the receipt, it exists
-                room.findEventById = jest.fn().mockReturnValue({} as MatrixEvent);
+                room.findEventById = vi.fn().mockReturnValue({} as MatrixEvent);
             });
 
             it("handles missing receipt type", () => {
@@ -3542,7 +3552,7 @@ describe("Room", function () {
                                 compareEventOrdering: (event1: string, _event2: string) => {
                                     return event1 === `eventId${i}` ? 1 : -1;
                                 },
-                                findEventById: jest.fn().mockReturnValue({} as MatrixEvent),
+                                findEventById: vi.fn().mockReturnValue({} as MatrixEvent),
                             }) as unknown as EventTimelineSet;
 
                         expect(room.getEventReadUpTo(userA)).toEqual(`eventId${i}`);
@@ -3555,7 +3565,7 @@ describe("Room", function () {
                             room.getUnfilteredTimelineSet = () =>
                                 ({
                                     compareEventOrdering: () => null,
-                                    findEventById: jest.fn().mockReturnValue({} as MatrixEvent),
+                                    findEventById: vi.fn().mockReturnValue({} as MatrixEvent),
                                 }) as unknown as EventTimelineSet;
                             room.getReadReceiptForUserId = (userId, ignore, receiptType): WrappedReceipt | null => {
                                 if (receiptType === ReceiptType.ReadPrivate) {
@@ -3575,7 +3585,7 @@ describe("Room", function () {
                         room.getUnfilteredTimelineSet = () =>
                             ({
                                 compareEventOrdering: () => null,
-                                findEventById: jest.fn().mockReturnValue({} as MatrixEvent),
+                                findEventById: vi.fn().mockReturnValue({} as MatrixEvent),
                             }) as unknown as EventTimelineSet;
                         room.getReadReceiptForUserId = (userId, ignore, receiptType): WrappedReceipt | null => {
                             if (receiptType === ReceiptType.Read) {
@@ -3593,7 +3603,7 @@ describe("Room", function () {
                         room.getUnfilteredTimelineSet = () =>
                             ({
                                 compareEventOrdering: () => null,
-                                findEventById: jest.fn().mockReturnValue({} as MatrixEvent),
+                                findEventById: vi.fn().mockReturnValue({} as MatrixEvent),
                             }) as unknown as EventTimelineSet;
                     });
 
@@ -3628,11 +3638,11 @@ describe("Room", function () {
 
     describe("roomNameGenerator", () => {
         const client = new TestClient(userA).client;
-        client.roomNameGenerator = jest.fn().mockReturnValue(null);
+        client.roomNameGenerator = vi.fn().mockImplementation(() => null);
         const room = new Room(roomId, client, userA);
 
         it("should call fn when recalculating room name", () => {
-            (client.roomNameGenerator as jest.Mock).mockClear();
+            vi.mocked(client.roomNameGenerator!).mockClear();
             room.recalculate();
             expect(client.roomNameGenerator).toHaveBeenCalled();
         });
@@ -3687,7 +3697,7 @@ describe("Room", function () {
         });
 
         it("emits event on notifications reset", () => {
-            const cb = jest.fn();
+            const cb = vi.fn();
 
             room.on(RoomEvent.UnreadNotifications, cb);
 
@@ -3755,7 +3765,7 @@ describe("Room", function () {
         });
 
         it("retains highlight for encrypted rooms on reset", () => {
-            room.hasEncryptionStateEvent = jest.fn().mockReturnValue(true);
+            room.hasEncryptionStateEvent = vi.fn().mockReturnValue(true);
 
             room.setThreadUnreadNotificationCount("$123", NotificationCountType.Total, 2);
             room.setThreadUnreadNotificationCount("$456", NotificationCountType.Total, 1);
@@ -3768,7 +3778,7 @@ describe("Room", function () {
         });
 
         it("resets highlight for unencrypted rooms on reset", () => {
-            room.hasEncryptionStateEvent = jest.fn().mockReturnValue(false);
+            room.hasEncryptionStateEvent = vi.fn().mockReturnValue(false);
 
             room.setThreadUnreadNotificationCount("$123", NotificationCountType.Total, 2);
             room.setThreadUnreadNotificationCount("$456", NotificationCountType.Total, 1);
@@ -3785,9 +3795,9 @@ describe("Room", function () {
     it("should load pending events from from the store and decrypt if needed", async () => {
         const client = new TestClient(userA).client;
         client["cryptoBackend"] = {
-            decryptEvent: jest.fn().mockResolvedValue({ clearEvent: { body: "enc" } }),
+            decryptEvent: vi.fn().mockResolvedValue({ clearEvent: { body: "enc" } }),
         } as unknown as CryptoBackend;
-        client.store.getPendingEvents = jest.fn(async (roomId) => [
+        client.store.getPendingEvents = vi.fn(async (roomId) => [
             {
                 event_id: "$1:server",
                 type: "m.room.message",
@@ -3840,10 +3850,10 @@ describe("Room", function () {
 
         beforeEach(() => {
             client = getMockClientWithEventEmitter({
-                decryptEventIfNeeded: jest.fn(),
+                decryptEventIfNeeded: vi.fn(),
             });
             room = new Room(roomId, client, userA);
-            jest.spyOn(room, "emit").mockClear();
+            vi.spyOn(room, "emit").mockClear();
         });
 
         const makePollStart = (id: string): MatrixEvent => {
@@ -3897,7 +3907,7 @@ describe("Room", function () {
 
             const error = new Error("Test error");
 
-            mocked(client.decryptEventIfNeeded).mockImplementation(async (event: MatrixEvent) => {
+            vi.mocked(client.decryptEventIfNeeded).mockImplementation(async (event: MatrixEvent) => {
                 if (event === errorEvent) throw error;
             });
 
@@ -3906,8 +3916,8 @@ describe("Room", function () {
 
             const poll = room.polls.get(pollStartEvent.getId()!)!;
             const poll2 = room.polls.get(pollStartEvent2.getId()!)!;
-            jest.spyOn(poll, "onNewRelation");
-            jest.spyOn(poll2, "onNewRelation");
+            vi.spyOn(poll, "onNewRelation");
+            vi.spyOn(poll2, "onNewRelation");
 
             await room.processPollEvents([errorEvent, messageEvent, pollResponseEvent]);
 
@@ -3925,7 +3935,7 @@ describe("Room", function () {
             const pollStartEventId = "poll1";
             const pollStartEvent = makePollStart(pollStartEventId);
             // simulate decryption failure
-            const isDecryptionFailureSpy = jest.spyOn(pollStartEvent, "isDecryptionFailure").mockReturnValue(true);
+            const isDecryptionFailureSpy = vi.spyOn(pollStartEvent, "isDecryptionFailure").mockReturnValue(true);
 
             await room.processPollEvents([pollStartEvent]);
             // do not expect a poll to show up for the room
@@ -3968,16 +3978,16 @@ describe("Room", function () {
         beforeEach(() => {
             client = getMockClientWithEventEmitter({
                 ...mockClientMethodsUser(),
-                isInitialSyncComplete: jest.fn().mockReturnValue(false),
-                supportsThreads: jest.fn().mockReturnValue(true),
+                isInitialSyncComplete: vi.fn().mockReturnValue(false),
+                supportsThreads: vi.fn().mockReturnValue(true),
             });
         });
 
         function roomCreateEvent(newRoomId: string, predecessorRoomId: string | null): MatrixEvent {
             const content: {
                 ["m.federate"]: boolean;
-                room_version: string;
-                predecessor: { event_id: string; room_id: string } | undefined;
+                "room_version": string;
+                "predecessor": { event_id: string; room_id: string } | undefined;
             } = {
                 "predecessor": undefined,
                 "m.federate": true,
@@ -4159,7 +4169,7 @@ describe("Room", function () {
         });
 
         it("when there is only one thread, it should return this one", () => {
-            const { thread1 } = addRoomThreads(room, 23, null);
+            const { thread1 } = addRoomThreads(room, 23);
             expect(room.getLastThread()).toBe(thread1);
         });
 
@@ -4187,7 +4197,7 @@ describe("Room", function () {
     describe("getRecommendedVersion", () => {
         it("returns the server's recommended version from capabilities", async () => {
             const client = new TestClient(userA).client;
-            client.getCapabilities = jest.fn().mockReturnValue({
+            client.getCapabilities = vi.fn().mockReturnValue({
                 ["m.room_versions"]: {
                     default: "1",
                     available: ["1", "2"],
@@ -4203,14 +4213,14 @@ describe("Room", function () {
 
         it("force-refreshes versions to make sure an upgrade is necessary", async () => {
             const client = new TestClient(userA).client;
-            client.getCapabilities = jest.fn().mockReturnValue({
+            client.getCapabilities = vi.fn().mockReturnValue({
                 ["m.room_versions"]: {
                     default: "5",
                     available: ["5"],
                 },
             });
 
-            client.fetchCapabilities = jest.fn().mockResolvedValue({
+            client.fetchCapabilities = vi.fn().mockResolvedValue({
                 ["m.room_versions"]: {
                     default: "1",
                     available: ["1"],
@@ -4290,5 +4300,77 @@ describe("Room", function () {
     it("saves and retrieves the bump stamp", () => {
         room.setBumpStamp(123456789);
         expect(room.getBumpStamp()).toEqual(123456789);
+    });
+
+    describe("should handle retention", () => {
+        let room: Room;
+        beforeEach(async () => {
+            vitest.useFakeTimers();
+            const client = vitest.mockObject(
+                new MatrixClient({
+                    baseUrl: "http://example.org",
+                    unstableMSC1763Retention: true,
+                }),
+            );
+            client.retentionPolicyService.getCached = vitest.fn().mockReturnValue({
+                policies: {
+                    "*": {
+                        max_lifetime: 1000,
+                    },
+                },
+            });
+            client.supportsThreads.mockReturnValue(true);
+            room = new Room("!room:id", client, "@my:user");
+        });
+
+        it("should NOT filter live events before the retention period", async () => {
+            const events = [mkMessage({ ts: Date.now() - 999 })];
+            await room.addLiveEvents(events, { addToState: false });
+            expect(room.getLiveTimeline().getEvents()).toHaveLength(1);
+        });
+        it("should filter live events before the retention period", async () => {
+            const events = [mkMessage({ ts: Date.now() - 1000 })];
+            await room.addLiveEvents(events, { addToState: false });
+            expect(room.getLiveTimeline().getEvents()).toHaveLength(0);
+        });
+
+        const stickyEvent: IStickyEvent = {
+            event_id: "$foo:bar",
+            room_id: "!roomId",
+            type: "org.example.any_type",
+            msc4354_sticky: {
+                duration_ms: 15000,
+            },
+            content: {
+                msc4354_sticky_key: "foobar",
+            },
+            origin_server_ts: 0,
+            sender: "@alice:example.org",
+            unsigned: {},
+        };
+        it("should NOT filter sticky events before the retention period", async () => {
+            const events = [new MatrixEvent({ ...stickyEvent, origin_server_ts: Date.now() - 999 })];
+            room._unstable_addStickyEvents(events);
+            expect([...room._unstable_getStickyEvents()]).toHaveLength(1);
+        });
+        it("should filter sticky events after the retention period", async () => {
+            const events = [new MatrixEvent({ ...stickyEvent, origin_server_ts: Date.now() - 1000 })];
+            room._unstable_addStickyEvents(events);
+            expect([...room._unstable_getStickyEvents()]).toHaveLength(0);
+        });
+        it("should NOT filter threaded events before the retention period", async () => {
+            const threadRoot = mkMessage();
+            const threadResponse1 = mkThreadResponse(threadRoot, { ts: Date.now() - 999 });
+            await room.addLiveEvents([threadRoot], { addToState: false });
+            room.processThreadedEvents([threadResponse1], false);
+            expect(room.getThreads()).toHaveLength(1);
+        });
+        it("should filter threaded events after the retention period", async () => {
+            const threadRoot = mkMessage();
+            const threadResponse1 = mkThreadResponse(threadRoot, { ts: Date.now() - 1000 });
+            await room.addLiveEvents([threadRoot], { addToState: false });
+            room.processThreadedEvents([threadResponse1], false);
+            expect(room.getThreads()).toHaveLength(0);
+        });
     });
 });

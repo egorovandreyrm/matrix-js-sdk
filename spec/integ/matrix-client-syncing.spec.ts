@@ -94,6 +94,7 @@ describe("MatrixClient syncing", () => {
             presence: {},
         };
 
+        // eslint-disable-next-line @vitest/expect-expect
         it("should /sync after /pushrules and /filter.", async () => {
             httpBackend!.when("GET", "/sync").respond(200, syncData);
 
@@ -501,7 +502,7 @@ describe("MatrixClient syncing", () => {
                 })
                 .respond(200, syncData);
 
-            client!.store.getSavedSyncToken = jest.fn().mockResolvedValue("this-is-a-token");
+            client!.store.getSavedSyncToken = vi.fn().mockResolvedValue("this-is-a-token");
             client!.startClient({ initialSyncLimit: 1 });
 
             return httpBackend!.flushAllExpected();
@@ -879,7 +880,7 @@ describe("MatrixClient syncing", () => {
         // events that arrive in the incremental sync as if they preceeded the
         // timeline events, however this breaks peeking, so it's disabled
         // (see sync.js)
-        it.skip("should correctly interpret state in incremental sync.", () => {
+        it.todo("should correctly interpret state in incremental sync.", () => {
             httpBackend!.when("GET", "/sync").respond(200, syncData);
             httpBackend!.when("GET", "/sync").respond(200, nextSyncData);
 
@@ -896,9 +897,9 @@ describe("MatrixClient syncing", () => {
             });
         });
 
-        it.skip("should update power levels for users in a room", () => {});
+        it.todo("should update power levels for users in a room", () => {});
 
-        it.skip("should update the room topic", () => {});
+        it.todo("should update the room topic", () => {});
 
         describe("onMarkerStateEvent", () => {
             const normalMessageEvent = utils.mkMessage({
@@ -994,7 +995,7 @@ describe("MatrixClient syncing", () => {
                     roomVersion: "org.matrix.msc2716v3",
                 },
             ].forEach((testMeta) => {
-                // eslint-disable-next-line jest/valid-title
+                // eslint-disable-next-line @vitest/valid-title
                 describe(testMeta.label, () => {
                     const roomCreateEvent = utils.mkEvent({
                         type: "m.room.create",
@@ -1835,7 +1836,7 @@ describe("MatrixClient syncing", () => {
             await Promise.all([httpBackend!.flushAllExpected(), awaitSyncEvent()]);
 
             const room = client!.getRoom(roomOne);
-            room!.hasEncryptionStateEvent = jest.fn().mockReturnValue(true);
+            room!.hasEncryptionStateEvent = vi.fn().mockReturnValue(true);
 
             expect(room!.getThreadUnreadNotificationCount(THREAD_ID, NotificationCountType.Total)).toBe(5);
 
@@ -2290,24 +2291,24 @@ describe("MatrixClient syncing", () => {
     });
 
     describe("of a room", () => {
-        it.skip(
+        it.todo(
             "should sync when a join event (which changes state) for the user" +
                 " arrives down the event stream (e.g. join from another device)",
             () => {},
         );
 
-        it.skip("should sync when the user explicitly calls joinRoom", () => {});
+        it.todo("should sync when the user explicitly calls joinRoom", () => {});
     });
 
     describe("syncLeftRooms", () => {
         beforeEach(async () => {
-            client!.startClient();
+            void client!.startClient();
 
             await httpBackend!.flushAllExpected();
             // the /sync call from syncLeftRooms ends up in the request
             // queue behind the call from the running client; add a response
             // to flush the client's one out.
-            await httpBackend!.when("GET", "/sync").respond(200, {});
+            httpBackend!.when("GET", "/sync").respond(200, {});
         });
 
         it("should create and use an appropriate filter", () => {
@@ -2519,7 +2520,7 @@ describe("MatrixClient syncing", () => {
             const eventB2 = new MatrixEvent({ type: "b", content: { body: "2" } });
 
             client!.store.storeAccountDataEvents([eventA1, eventB1]);
-            const fn = jest.fn();
+            const fn = vi.fn();
             client!.on(ClientEvent.AccountData, fn);
 
             httpBackend!.when("GET", "/sync").respond(200, {
@@ -2545,6 +2546,64 @@ describe("MatrixClient syncing", () => {
             expect(eventB?.getContent().body).toBe("2");
 
             client!.off(ClientEvent.AccountData, fn);
+        });
+    });
+
+    describe("user profiles", () => {
+        const TEST_STATUS_UPDATE = {
+            text: "Swimming in the Great Lakes!",
+            emoji: "🏊️",
+        };
+
+        beforeEach(() => {
+            vi.spyOn(client!, "doesServerSupportExtendedProfiles").mockResolvedValue(true);
+        });
+
+        it("should consume user profile updates from the sync response", async () => {
+            const fn = vi.fn();
+            client!.on(ClientEvent.UserProfileUpdate, fn);
+
+            httpBackend!.expectedRequests = [];
+            httpBackend!.when("GET", "/versions").respond(200, {});
+            httpBackend!.when("GET", "/pushrules").respond(200, {});
+            httpBackend!
+                .when("POST", "/filter")
+                .check((req) => {
+                    expect(req.data).toEqual({
+                        "org.matrix.msc4429.profile_fields": {
+                            ids: ["m.status"],
+                        },
+                    });
+                })
+                .respond(200, { filter_id: "a filter id" });
+
+            httpBackend!.when("GET", "/sync").respond(200, {
+                next_batch: "batch_token",
+                rooms: {},
+                presence: {},
+                users: {
+                    ["@alice:localhost"]: {
+                        profile_updates: {
+                            ["m.status"]: TEST_STATUS_UPDATE,
+                        },
+                    },
+                },
+            });
+
+            await Promise.all([
+                client!.startClient({ unstableMSC4429SyncUserProfileFields: ["m.status"] }),
+                httpBackend!.flushAllExpected(),
+            ]);
+
+            expect(await client!.getExtendedProfileProperty("@alice:localhost", "m.status")).toEqual(
+                TEST_STATUS_UPDATE,
+            );
+
+            expect(fn).toHaveBeenCalledWith("@alice:localhost", {
+                "m.status": TEST_STATUS_UPDATE,
+            });
+
+            client!.off(ClientEvent.UserProfileUpdate, fn);
         });
     });
 
@@ -2715,7 +2774,7 @@ describe("MatrixClient syncing (IndexedDB version)", () => {
         idbHttpBackend.verifyNoOutstandingExpectation();
         // Force sync accumulator to persist, reset client, assert it doesn't re-fetch event on next start-up
         await idbClient.store.save(true);
-        await idbClient.stopClient();
+        idbClient.stopClient();
         await idbClient.store.destroy();
         await idbHttpBackend.stop();
 
@@ -2738,7 +2797,7 @@ describe("MatrixClient syncing (IndexedDB version)", () => {
         assertEventsExpected(idbClient);
 
         idbHttpBackend.verifyNoOutstandingExpectation();
-        await idbClient.stopClient();
+        idbClient.stopClient();
         await idbHttpBackend.stop();
     });
 });

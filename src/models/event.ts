@@ -19,9 +19,8 @@ limitations under the License.
  * the public classes.
  */
 
-import { type ExtensibleEvent, ExtensibleEvents, type Optional } from "matrix-events-sdk";
+import { type ExtensibleEvent, ExtensibleEvents } from "matrix-events-sdk";
 
-import type { IEventDecryptionResult } from "../@types/crypto.ts";
 import { logger } from "../logger.ts";
 import {
     EVENT_VISIBILITY_CHANGE_TYPE,
@@ -40,7 +39,7 @@ import { TypedReEmitter } from "../ReEmitter.ts";
 import { type MatrixError } from "../http-api/index.ts";
 import { TypedEventEmitter } from "./typed-event-emitter.ts";
 import { type EventStatus } from "./event-status.ts";
-import { type CryptoBackend, DecryptionError } from "../common-crypto/CryptoBackend.ts";
+import { type CryptoBackend, DecryptionError, type EventDecryptionResult } from "../common-crypto/CryptoBackend.ts";
 import { type IAnnotatedPushRule } from "../@types/PushRules.ts";
 import { type Room } from "./room.ts";
 import { EventTimeline } from "./event-timeline.ts";
@@ -77,6 +76,8 @@ export interface IUnsigned {
     "m.relations"?: Record<RelationType | string, any>; // No common pattern for aggregated relations
     "msc4354_sticky_duration_ttl_ms"?: number;
     [UNSIGNED_THREAD_ID_FIELD.name]?: string;
+    "membership"?: Membership;
+    "io.element.msc4115.membership"?: Membership;
 }
 
 export interface IThreadBundledRelationship {
@@ -186,8 +187,7 @@ export interface IDecryptOptions {
     isRetry?: boolean;
 
     /**
-     * Whether the message should be re-decrypted if it was previously successfully decrypted with an untrusted key.
-     * Defaults to `false`.
+     * @deprecated does nothing
      */
     forceRedecryptIfUntrusted?: boolean;
 }
@@ -270,7 +270,7 @@ export class MatrixEvent extends TypedEventEmitter<MatrixEventEmittedEvents, Mat
     // addition to a falsy cached event value. We check the flag later on in
     // a public getter to decide if the cache is valid.
     private _hasCachedExtEv = false;
-    private _cachedExtEv: Optional<ExtensibleEvent> = undefined;
+    private _cachedExtEv?: ExtensibleEvent = undefined;
 
     /** If we failed to decrypt this event, the reason for the failure. Otherwise, `null`. */
     private _decryptionFailureReason: DecryptionFailureCode | null = null;
@@ -285,15 +285,12 @@ export class MatrixEvent extends TypedEventEmitter<MatrixEventEmittedEvents, Mat
      */
     private claimedEd25519Key: string | null = null;
 
-    /* curve25519 keys of devices involved in telling us about the
-     * senderCurve25519Key and claimedEd25519Key.
-     * See getForwardingCurve25519KeyChain().
+    /**
+     * If another user forwarded the key to this message
+     * (eg via [MSC4268](https://github.com/matrix-org/matrix-spec-proposals/pull/4268)),
+     * the ID of that user.
      */
-    private forwardingCurve25519KeyChain: string[] = [];
-
-    /* where the decryption key is untrusted
-     */
-    private untrusted: boolean | null = null;
+    private keyForwardedBy?: string;
 
     /* if we have a process decrypting this event, a Promise which resolves
      * when it is finished. Normally null.
@@ -481,9 +478,9 @@ export class MatrixEvent extends TypedEventEmitter<MatrixEventEmittedEvents, Mat
      *
      * @deprecated Use stable functions where possible.
      */
-    public get unstableExtensibleEvent(): Optional<ExtensibleEvent> {
+    public get unstableExtensibleEvent(): ExtensibleEvent | undefined {
         if (!this._hasCachedExtEv) {
-            this._cachedExtEv = ExtensibleEvents.parse(this.getEffectiveEvent());
+            this._cachedExtEv = ExtensibleEvents.parse(this.getEffectiveEvent()) ?? undefined;
         }
         return this._cachedExtEv;
     }
@@ -753,7 +750,7 @@ export class MatrixEvent extends TypedEventEmitter<MatrixEventEmittedEvents, Mat
 
     /**
      * Get the event state_key if it has one. If necessary, this will perform
-     * string-unpacking on the state key, as per MSC3414. This will return
+     * string-unpacking on the state key, as per MSC4362. This will return
      * <code>undefined</code> for message events.
      * @returns The event's `state_key`.
      */
@@ -766,7 +763,7 @@ export class MatrixEvent extends TypedEventEmitter<MatrixEventEmittedEvents, Mat
 
     /**
      * Get the raw event state_key if it has one. This may be string-packed as per
-     * MSC3414 if the state event is encrypted. This will return <code>undefined
+     * MSC4362 if the state event is encrypted. This will return <code>undefined
      * </code> for message events.
      * @returns The event's `state_key`.
      */
@@ -789,9 +786,9 @@ export class MatrixEvent extends TypedEventEmitter<MatrixEventEmittedEvents, Mat
      * @returns The user's room membership, or `undefined` if the server does
      *   not report it.
      */
-    public getMembershipAtEvent(): Optional<Membership | string> {
+    public getMembershipAtEvent(): Membership | string | undefined {
         const unsigned = this.getUnsigned();
-        return UNSIGNED_MEMBERSHIP_FIELD.findIn<Membership | string>(unsigned);
+        return UNSIGNED_MEMBERSHIP_FIELD.findIn<Membership>(unsigned);
     }
 
     /**
@@ -894,8 +891,7 @@ export class MatrixEvent extends TypedEventEmitter<MatrixEventEmittedEvents, Mat
         }
 
         const alreadyDecrypted = this.clearEvent && !this.isDecryptionFailure();
-        const forceRedecrypt = options.forceRedecryptIfUntrusted && this.isKeySourceUntrusted();
-        if (alreadyDecrypted && !forceRedecrypt) {
+        if (alreadyDecrypted) {
             // we may want to just ignore this? let's start with rejecting it.
             throw new Error("Attempt to decrypt event which has already been decrypted");
         }
@@ -1025,12 +1021,11 @@ export class MatrixEvent extends TypedEventEmitter<MatrixEventEmittedEvents, Mat
      *
      * @param decryptionResult - the decryption result, including the plaintext and some key info
      */
-    private setClearData(decryptionResult: IEventDecryptionResult): void {
+    private setClearData(decryptionResult: EventDecryptionResult): void {
         this.clearEvent = decryptionResult.clearEvent;
         this.senderCurve25519Key = decryptionResult.senderCurve25519Key ?? null;
         this.claimedEd25519Key = decryptionResult.claimedEd25519Key ?? null;
-        this.forwardingCurve25519KeyChain = decryptionResult.forwardingCurve25519KeyChain || [];
-        this.untrusted = decryptionResult.untrusted || false;
+        this.keyForwardedBy = decryptionResult.keyForwardedBy;
         this.invalidateExtensibleEvent();
     }
 
@@ -1049,8 +1044,6 @@ export class MatrixEvent extends TypedEventEmitter<MatrixEventEmittedEvents, Mat
         };
         this.senderCurve25519Key = null;
         this.claimedEd25519Key = null;
-        this.forwardingCurve25519KeyChain = [];
-        this.untrusted = false;
         this.invalidateExtensibleEvent();
     }
 
@@ -1120,29 +1113,34 @@ export class MatrixEvent extends TypedEventEmitter<MatrixEventEmittedEvents, Mat
     }
 
     /**
-     * Get the curve25519 keys of the devices which were involved in telling us
-     * about the claimedEd25519Key and sender curve25519 key.
+     *  Returns an empty array.
      *
-     * Normally this will be empty, but in the case of a forwarded megolm
-     * session, the sender keys are sent to us by another device (the forwarding
-     * device), which we need to trust to do this. In that case, the result will
-     * be a list consisting of one entry.
+     * Previously, this returned the chain of Curve25519 keys through which
+     * this session was forwarded, via `m.forwarded_room_key` events.
+     * However, that is not cryptographically reliable, and clients should not
+     * be using it.
      *
-     * If the device that sent us the key (A) got it from another device which
-     * it wasn't prepared to vouch for (B), the result will be [A, B]. And so on.
-     *
-     * @returns base64-encoded curve25519 keys, from oldest to newest.
+     * @see https://github.com/matrix-org/matrix-spec/issues/1089
+     * @deprecated
      */
     public getForwardingCurve25519KeyChain(): string[] {
-        return this.forwardingCurve25519KeyChain;
+        return [];
     }
 
     /**
-     * Whether the decryption key was obtained from an untrusted source. If so,
-     * we cannot verify the authenticity of the message.
+     * @deprecated always returns false
      */
-    public isKeySourceUntrusted(): boolean | undefined {
-        return !!this.untrusted;
+    public isKeySourceUntrusted(): false {
+        return false;
+    }
+
+    /**
+     * If another user forwarded the key to this message
+     * (eg via [MSC4268](https://github.com/matrix-org/matrix-spec-proposals/pull/4268)),
+     * get the ID of that user.
+     */
+    public getKeyForwardingUser(): string | undefined {
+        return this.keyForwardedBy;
     }
 
     public getUnsigned(): IUnsigned {
