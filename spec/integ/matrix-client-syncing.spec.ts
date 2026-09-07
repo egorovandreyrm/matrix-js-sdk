@@ -1486,6 +1486,40 @@ describe("MatrixClient syncing", () => {
                     );
                 });
             });
+
+            // Workaround for https://github.com/element-hq/synapse/issues/18793
+            it("should apply own leave event from the timeline when state_after omits it for left rooms", async () => {
+                httpBackend!.when("GET", "/sync").respond(200, {
+                    rooms: {
+                        join: { [roomOne]: roomOneSyncOne },
+                    },
+                });
+                httpBackend!.when("GET", "/sync").respond(200, {
+                    rooms: {
+                        leave: {
+                            [roomOne]: {
+                                "timeline": {
+                                    events: [
+                                        utils.mkMembership({
+                                            room: roomOne,
+                                            mship: KnownMembership.Leave,
+                                            user: selfUserId,
+                                        }),
+                                    ],
+                                },
+                                "org.matrix.msc4222.state_after": { events: [] },
+                            },
+                        },
+                    },
+                });
+
+                client!.startClient();
+                return Promise.all([httpBackend!.flushAllExpected(), awaitSyncEvent(2)]).then(() => {
+                    const room = client!.getRoom(roomOne)!;
+                    expect(room.getMyMembership()).toEqual(KnownMembership.Leave);
+                    expect(room.getMember(selfUserId)?.membership).toEqual(KnownMembership.Leave);
+                });
+            });
         });
     });
 

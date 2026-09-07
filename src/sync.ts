@@ -1795,11 +1795,44 @@ export class SyncApi {
 
         if ("org.matrix.msc4222.state_after" in wrappedRoom) {
             await this.injectRoomEvents(wrappedRoom.room, undefined, stateAfterEvents, timelineEvents);
+            this.applyOwnMembershipMissingFromStateAfter(wrappedRoom.room, stateAfterEvents, timelineEvents);
         } else {
             await this.injectRoomEvents(wrappedRoom.room, stateEvents, undefined, timelineEvents);
         }
 
         return { timelineEvents, stateEvents, stateAfterEvents };
+    }
+
+    /**
+     * Workaround for https://github.com/element-hq/synapse/issues/18793: for rooms in the `leave`
+     * section of /sync, Synapse puts the user's own leave/ban event in the `timeline` but omits it
+     * from `state_after`. Because timeline events are not applied to the room state when
+     * `state_after` is present, the room would otherwise stay at membership "join" forever.
+     *
+     * If `state_after` carries no membership event for us but the timeline does, apply the
+     * timeline's membership event(s) to the state so the membership reflects reality.
+     */
+    private applyOwnMembershipMissingFromStateAfter(
+        room: Room,
+        stateAfterEvents: MatrixEvent[],
+        timelineEvents: MatrixEvent[],
+    ): void {
+        const myUserId = this.client.getUserId();
+        if (!myUserId) return;
+
+        const isOwnMembership = (e: MatrixEvent): boolean =>
+            e.isState() && e.getType() === EventType.RoomMember && e.getStateKey() === myUserId;
+
+        if (stateAfterEvents.some(isOwnMembership)) return;
+
+        const ownMembershipEvents = timelineEvents.filter(isOwnMembership);
+        if (ownMembershipEvents.length === 0) return;
+
+        this.syncOpts.logger.warn(
+            `Room ${room.roomId} in leave section has our membership event in the timeline but not in ` +
+                `state_after; applying it to the room state`,
+        );
+        room.currentState.setStateEvents(ownMembershipEvents);
     }
 
     /**
