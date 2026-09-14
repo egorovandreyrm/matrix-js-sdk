@@ -238,5 +238,64 @@ describe("OidcTokenRefresher", () => {
 
             await expect(refresher.tokenRefreshFunction("refresh-token")).rejects.not.toThrow(TokenRefreshLogoutError);
         });
+
+        it("should not throw TokenRefreshLogoutError on a 4xx without a JSON body", async () => {
+            fetchMock.modifyRoute("token-endpoint", {
+                response: {
+                    status: 403,
+                    headers: {
+                        "Content-Type": "text/html",
+                    },
+                    body: "<html><body>Blocked by your network administrator</body></html>",
+                },
+            });
+
+            const fn = vi.fn();
+            const refresher = new TokenRefresher(auth, fn);
+
+            await expect(refresher.tokenRefreshFunction("refresh-token")).rejects.not.toThrow(TokenRefreshLogoutError);
+        });
+
+        it("should not throw TokenRefreshLogoutError on a 4xx with a JSON body which is not an OAuth 2.0 error", async () => {
+            fetchMock.modifyRoute("token-endpoint", {
+                response: {
+                    status: 429,
+                    headers: {
+                        "Content-Type": "application/json",
+                    },
+                    body: {
+                        some: "field",
+                    },
+                },
+            });
+
+            const fn = vi.fn();
+            const refresher = new TokenRefresher(auth, fn);
+
+            await expect(refresher.tokenRefreshFunction("refresh-token")).rejects.not.toThrow(TokenRefreshLogoutError);
+        });
+
+        it("should not throw TokenRefreshLogoutError on a 4xx Matrix API error code which looks like an OAuth 2.0 error", async () => {
+            // The C-S API [standard error response](https://spec.matrix.org/v1.18/client-server-api/#standard-error-response)
+            // is hard to distinguish from an RFC 6749 error response. This test asserts a Matrix error response which
+            // looks like an RFC 6749 error response does not cause a logout.
+            fetchMock.modifyRoute("token-endpoint", {
+                response: {
+                    status: 429,
+                    headers: {
+                        "Content-Type": "application/json",
+                    },
+                    body: {
+                        errcode: "M_LIMIT_EXCEEDED",
+                        error: "Rate limited",
+                    },
+                },
+            });
+
+            const fn = vi.fn();
+            const refresher = new TokenRefresher(auth, fn);
+
+            await expect(refresher.tokenRefreshFunction("refresh-token")).rejects.not.toThrow(TokenRefreshLogoutError);
+        });
     });
 });

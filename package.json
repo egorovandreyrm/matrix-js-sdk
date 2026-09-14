@@ -1,6 +1,6 @@
 {
     "name": "matrix-js-sdk",
-    "version": "42.0.0",
+    "version": "42.3.0",
     "description": "Matrix Client-Server SDK for Javascript",
     "engines": {
         "node": ">=22.0.0"
@@ -56,13 +56,13 @@
     ],
     "dependencies": {
         "@babel/runtime": "^8.0.0",
-        "@matrix-org/matrix-sdk-crypto-wasm": "^18.3.1",
+        "@matrix-org/matrix-sdk-crypto-wasm": "^18.4.0",
         "another-json": "^0.2.0",
         "bs58": "^6.0.0",
         "content-type": "^2.0.0",
         "loglevel": "^1.9.2",
         "matrix-events-sdk": "git+https://github.com/egorovandreyrm/matrix-events-sdk.git#a1debce7926c905032cdb099fd21a79befb04c68",
-        "matrix-widget-api": "^1.16.1",
+        "matrix-widget-api": "^1.18.0",
         "p-retry": "8",
         "sdp-transform": "^3.0.0",
         "unhomoglyph": "^1.0.6"
@@ -90,16 +90,16 @@
         "@vitest/ui": "^4.0.17",
         "concurrently": "^10.0.0",
         "debug": "^4.3.4",
-        "fake-indexeddb": "^5.0.2",
+        "fake-indexeddb": "^6.0.0",
         "fetch-mock": "^12.6.0",
         "happy-dom": "^20.1.0",
         "husky": "^9.0.0",
         "knip": "^6.0.0",
         "lint-staged": "^17.0.0",
         "matrix-mock-request": "^2.5.0",
-        "oxfmt": "^0.58.0",
+        "oxfmt": "^0.63.0",
         "oxlint": "^1.70.0",
-        "oxlint-tsgolint": "^0.24.0",
+        "oxlint-tsgolint": "^7.0.0",
         "typedoc": "^0.28.1",
         "typedoc-plugin-coverage": "^4.0.0",
         "typedoc-plugin-mdn-links": "^5.0.0",
