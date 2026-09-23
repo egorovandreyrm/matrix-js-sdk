@@ -220,6 +220,60 @@ describe("fixNotificationCountOnDecryption", () => {
         expect(room.getThreadUnreadNotificationCount(THREAD_ID, NotificationCountType.Highlight)).toBe(0);
     });
 
+    it("counts an event only once when it is decrypted more than once", () => {
+        room.setUnreadNotificationCount(NotificationCountType.Total, 0);
+        room.setUnreadNotificationCount(NotificationCountType.Highlight, 0);
+
+        // First pass: decryption failed (no key yet), the placeholder still notifies.
+        mockClient.getPushActionsForEvent = vi.fn().mockReturnValue(mkPushAction(true, false));
+        fixNotificationCountOnDecryption(mockClient, event);
+        expect(room.getRoomUnreadNotificationCount(NotificationCountType.Total)).toBe(1);
+
+        // Second pass: the key arrived and the event decrypted for real.
+        fixNotificationCountOnDecryption(mockClient, event);
+        expect(room.getRoomUnreadNotificationCount(NotificationCountType.Total)).toBe(1);
+        expect(room.getRoomUnreadNotificationCount(NotificationCountType.Highlight)).toBe(0);
+    });
+
+    it("adds a highlight on re-decryption without counting the total again", () => {
+        room.setUnreadNotificationCount(NotificationCountType.Total, 0);
+        room.setUnreadNotificationCount(NotificationCountType.Highlight, 0);
+
+        mockClient.getPushActionsForEvent = vi.fn().mockReturnValue(mkPushAction(true, false));
+        fixNotificationCountOnDecryption(mockClient, event);
+
+        mockClient.getPushActionsForEvent = vi.fn().mockReturnValue(mkPushAction(true, true));
+        fixNotificationCountOnDecryption(mockClient, event);
+
+        expect(room.getRoomUnreadNotificationCount(NotificationCountType.Total)).toBe(1);
+        expect(room.getRoomUnreadNotificationCount(NotificationCountType.Highlight)).toBe(1);
+    });
+
+    it("takes back the count when re-decryption reveals a non-notifying event", () => {
+        room.setUnreadNotificationCount(NotificationCountType.Total, 0);
+        room.setUnreadNotificationCount(NotificationCountType.Highlight, 0);
+
+        mockClient.getPushActionsForEvent = vi.fn().mockReturnValue(mkPushAction(true, false));
+        fixNotificationCountOnDecryption(mockClient, event);
+        expect(room.getRoomUnreadNotificationCount(NotificationCountType.Total)).toBe(1);
+
+        mockClient.getPushActionsForEvent = vi.fn().mockReturnValue(mkPushAction(false, false));
+        fixNotificationCountOnDecryption(mockClient, event);
+        expect(room.getRoomUnreadNotificationCount(NotificationCountType.Total)).toBe(0);
+    });
+
+    it("counts a thread event only once when it is decrypted more than once", () => {
+        room.setThreadUnreadNotificationCount(THREAD_ID, NotificationCountType.Total, 0);
+        room.setThreadUnreadNotificationCount(THREAD_ID, NotificationCountType.Highlight, 0);
+
+        mockClient.getPushActionsForEvent = vi.fn().mockReturnValue(mkPushAction(true, false));
+        fixNotificationCountOnDecryption(mockClient, threadEvent);
+        fixNotificationCountOnDecryption(mockClient, threadEvent);
+
+        expect(room.getThreadUnreadNotificationCount(THREAD_ID, NotificationCountType.Total)).toBe(1);
+        expect(room.getThreadUnreadNotificationCount(THREAD_ID, NotificationCountType.Highlight)).toBe(0);
+    });
+
     it("emits events", () => {
         const cb = vi.fn();
         room.on(RoomEvent.UnreadNotifications, cb);

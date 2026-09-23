@@ -8889,6 +8889,50 @@ function getUnstableDelayQueryOpts(delayOpts: SendDelayedEventRequestOpts): Quer
 }
 
 /**
+ * Events which have already been counted towards a room's (or thread's) unread notification
+ * counts by {@link fixNotificationCountOnDecryption}, per count type.
+ *
+ * An event can be decrypted more than once: a first attempt fails because the room key is
+ * not available yet (typically right after signing in on a new device, before the keys have
+ * been restored from backup), which produces an `m.bad.encrypted` placeholder that still
+ * matches the generic message push rule, and a later attempt succeeds once the key arrives.
+ * Both attempts emit {@link MatrixEventEvent.Decrypted}, so without this bookkeeping the
+ * same event would be counted twice.
+ */
+const eventsCountedAsNotifying = new WeakSet<MatrixEvent>();
+const eventsCountedAsHighlight = new WeakSet<MatrixEvent>();
+
+/**
+ * Adjusts the given unread count for the context (room or thread) of the event so that it is
+ * counted exactly once if `shouldCount` is true, and not at all otherwise.
+ */
+function reconcileUnreadCountForEvent(
+    room: Room,
+    type: NotificationCountType,
+    event: MatrixEvent,
+    counted: WeakSet<MatrixEvent>,
+    shouldCount: boolean,
+): void {
+    const alreadyCounted = counted.has(event);
+    if (shouldCount === alreadyCounted) return;
+
+    const current = room.getUnreadCountForEventContext(type, event);
+    const newCount = shouldCount ? current + 1 : Math.max(0, current - 1);
+    if (shouldCount) {
+        counted.add(event);
+    } else {
+        counted.delete(event);
+    }
+
+    const isThreadEvent = !!event.threadRootId && !event.isThreadRoot;
+    if (isThreadEvent) {
+        room.setThreadUnreadNotificationCount(event.threadRootId, type, newCount);
+    } else {
+        room.setUnreadNotificationCount(type, newCount);
+    }
+}
+
+/**
  * recalculates an accurate notifications count on event decryption.
  * Servers do not have enough knowledge about encrypted events to calculate an
  * accurate notification_count
@@ -8941,33 +8985,23 @@ export function fixNotificationCountOnDecryption(cli: MatrixClient, event: Matri
     // Ensure the unread counts are kept up to date if the event is encrypted
     // We also want to make sure that the notification count goes up if we already
     // have encrypted events to avoid other code from resetting 'highlight' to zero.
+    //
+    // Each event contributes at most once to each count, however many times it gets
+    // (re-)decrypted; if a later decryption changes the verdict, the earlier contribution
+    // is taken back. See `eventsCountedAsNotifying`.
     const newHighlight = !!actions?.tweaks?.highlight;
 
-    if (newHighlight) {
-        // TODO: Handle mentions received while the client is offline
-        // See also https://github.com/vector-im/element-web/issues/9069
-        const newCount = room.getUnreadCountForEventContext(NotificationCountType.Highlight, event) + 1;
-        if (isThreadEvent) {
-            room.setThreadUnreadNotificationCount(event.threadRootId, NotificationCountType.Highlight, newCount);
-        } else {
-            room.setUnreadNotificationCount(NotificationCountType.Highlight, newCount);
-        }
-    }
+    // TODO: Handle mentions received while the client is offline
+    // See also https://github.com/vector-im/element-web/issues/9069
+    reconcileUnreadCountForEvent(room, NotificationCountType.Highlight, event, eventsCountedAsHighlight, newHighlight);
 
     // `notify` is used in practice for incrementing the total count
     const newNotify = !!actions?.notify;
 
     // The room total count is NEVER incremented by the server for encrypted rooms. We basically ignore
     // the server here as it's always going to tell us to increment for encrypted events.
-    if (newNotify) {
-        // Total count is used to typically increment a room notification counter, but not loudly highlight it.
-        const newCount = room.getUnreadCountForEventContext(NotificationCountType.Total, event) + 1;
-        if (isThreadEvent) {
-            room.setThreadUnreadNotificationCount(event.threadRootId, NotificationCountType.Total, newCount);
-        } else {
-            room.setUnreadNotificationCount(NotificationCountType.Total, newCount);
-        }
-    }
+    // Total count is used to typically increment a room notification counter, but not loudly highlight it.
+    reconcileUnreadCountForEvent(room, NotificationCountType.Total, event, eventsCountedAsNotifying, newNotify);
 }
 
 /**
